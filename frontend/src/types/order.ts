@@ -1,0 +1,58 @@
+/** 订单状态：1 未支付 / 2 已支付 / 3 已取消 */
+export type OrderStatus = 1 | 2 | 3;
+
+/** 后端返回的订单数据结构 */
+export interface Order {
+  id: number;
+  orderNo: string;
+  customerName: string;
+  phone: string;
+  status: OrderStatus;
+  amount: number;
+  createdAt: string;
+  updatedAt?: string;
+  remark?: string;
+}
+
+/** 订单查询条件（对应 GET /api/order 的 query 参数） */
+export interface OrderQuery {
+  orderNo?: string;
+  customerName?: string;
+  phone?: string;
+  status?: OrderStatus;
+  startTime?: number;
+  endTime?: number;
+  page?: number;
+  pageSize?: number;
+}
+
+/** 后端分页返回结构 */
+export interface PageResult<T> {
+  list: T[];
+  total: number;
+}
+
+/** 后端统一响应包装 */
+export interface ApiResponse<T> {
+  code: number;
+  message: string;
+  data: T;
+}
+
+/** 表格选择模式 */
+export enum SelectionMode {
+  /** 手动勾选模式：保存勾选的数据 id */
+  MANUAL = 'MANUAL',
+  /** 全选模式：标识全选 + 保留筛选条件，只记录反选的 id */
+  ALL = 'ALL',
+}
+
+/** 表格勾选状态 */
+export interface SelectionState {
+  /** 当前选择模式 */
+  mode: SelectionMode;
+  /** 手动勾选模式下，选中的数据 id 集合 */
+  selectedIds: Set<number>;
+  /** 全选模式下，手动反选（排除）的数据 id 集合 */
+  excludedIds: Set<number>;
+}

@@ -1,0 +1,70 @@
+.container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 16px 16px;
+  overflow: hidden;
+}
+
+.tableWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pagination {
+  flex-shrink: 0;
+  padding-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 勾选提醒条 */
+.selectionNotice {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: #e6f7ff;
+  border: 1px solid #91d5ff;
+  border-radius: 4px;
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.selectionCount {
+  font-weight: 600;
+  color: #1677ff;
+}
+
+.modeTag {
+  margin-left: 8px;
+  color: #1677ff;
+  font-size: 12px;
+}
+
+/* 表头选择单元格 */
+.headerCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modeSwitch {
+  cursor: pointer;
+  font-size: 12px;
+  color: #1677ff;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.modeSwitch:hover {
+  color: #4096ff;
+}
+
+/* 表格行 */
+.row {
+  cursor: pointer;
+}

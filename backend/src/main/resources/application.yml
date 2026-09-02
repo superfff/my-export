@@ -1,0 +1,32 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: order-backend
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 数据库连接信息通过环境变量注入，便于 Docker 一键部署时覆盖（默认值用于本地开发）
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:order_db}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:order_user}
+    password: ${DB_PASSWORD:order_pass}
+
+mybatis-plus:
+  configuration:
+    # 数据库下划线字段自动映射到 Java 驼峰属性（如 order_no -> orderNo）
+    map-underscore-to-camel-case: true
+    # 开发阶段打印 SQL，方便看到实际执行的查询语句
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always

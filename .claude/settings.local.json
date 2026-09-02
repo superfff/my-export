@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm --version)",
+      "Bash(npm --version)",
+      "Bash(pnpm -v)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm build *)",
+      "Bash(cd frontend *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(docker build *)",
+      "Bash(echo *)",
+      "Bash(unzip -l .mvn/wrapper/maven-wrapper.jar)",
+      "Bash(./mvnw -v)",
+      "Bash(docker compose *)",
+      "Bash(lsof -i :8080 -sTCP:LISTEN)",
+      "Bash(docker exec *)",
+      "Bash(lsof -i :5173 -sTCP:LISTEN)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:5173/)"
+    ]
+  },
+  "theme": "dark",
+  "skillOverrides": {
+    "change-log": "name-only"
+  }
+}

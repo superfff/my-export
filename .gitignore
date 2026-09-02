@@ -1,0 +1,15 @@
+node_modules
+dist
+*.local
+.DS_Store
+npm-debug.log*
+pnpm-debug.log*
+
+# Java / Maven
+backend/target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
