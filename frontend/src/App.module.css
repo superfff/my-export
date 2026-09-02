@@ -11,18 +11,3 @@
   height: 100%;
   overflow: hidden; /* 功能模块内部自行滚动 */
 }
-
-/* 后端异常右上角固定提示 */
-.healthAlert {
-  position: fixed;
-  top: 0;
-  right: 0;
-  z-index: 1000;
-  min-width: 200px;
-  pointer-events: none;
-}
-
-.healthAlert :global(.ant-alert) {
-  border-radius: 0 0 0 8px;
-  pointer-events: auto;
-}

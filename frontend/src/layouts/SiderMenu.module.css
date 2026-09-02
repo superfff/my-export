@@ -17,3 +17,21 @@
   font-weight: 600;
   letter-spacing: 1px;
 }
+
+/* 底部健康状态栏 */
+.healthBar {
+  margin-top: auto;
+  flex-shrink: 0;
+  padding: 12px 24px;
+  font-size: 13px;
+  line-height: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.healthy {
+  color: #52c41a;
+}
+
+.unhealthy {
+  color: #ff4d4f;
+}

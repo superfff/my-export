@@ -56,3 +56,29 @@ export interface SelectionState {
   /** 全选模式下，手动反选（排除）的数据 id 集合 */
   excludedIds: Set<number>;
 }
+
+/** 导出模式 */
+export enum ExportMode {
+  /** 导出已选 — 手动勾选 */
+  SELECTED = 'SELECTED',
+  /** 导出已选 — 全选排除 */
+  ALL_EXCLUDE = 'ALL_EXCLUDE',
+  /** 导出筛选结果 */
+  FILTERED = 'FILTERED',
+}
+
+/** 导出请求参数 */
+export interface ExportParams {
+  /** 导出文件名 */
+  filename: string;
+  /** 勾选的导出字段（dataIndex 值） */
+  fields: string[];
+  /** 导出模式 */
+  mode: ExportMode;
+  /** SELECTED 模式：手动勾选的 id */
+  selectedIds?: number[];
+  /** ALL_EXCLUDE 模式：排除的 id */
+  excludedIds?: number[];
+  /** ALL_EXCLUDE / FILTERED 模式：当前筛选条件 */
+  query?: OrderQuery;
+}

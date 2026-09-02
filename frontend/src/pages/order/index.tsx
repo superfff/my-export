@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Tag } from 'antd';
+import { Tag, Button, Space } from 'antd';
 import type { TableColumnsType } from 'antd';
 import PageTable from '../../components/PageTable';
 import { createInitialSelectionState } from '../../components/PageTable';
+import ExportModal from '../../components/ExportModal';
 import OrderQueryForm from './OrderQueryForm';
 import type { OrderFormValues } from './OrderQueryForm';
 import { fetchOrders } from '../../http/order';
 import { ORDER_STATUS } from '../../constants/order';
-import type { Order, OrderQuery, OrderStatus, SelectionState } from '../../types/order';
+import type { Order, OrderQuery, OrderStatus, SelectionState, ExportParams } from '../../types/order';
+import { ExportMode, SelectionMode } from '../../types/order';
 import { formatDateTime } from '../../utils/format';
 import styles from './index.module.css';
 
@@ -39,6 +41,17 @@ const columns: TableColumnsType<Order> = [
   },
 ];
 
+/** 从 columns 提取表头字段选项，供导出弹窗使用 */
+const exportColumnOptions = columns
+  .filter((col) => 'dataIndex' in col && col.dataIndex != null)
+  .map((col) => ({
+    label: typeof col.title === 'string' ? col.title : '',
+    value: String((col as Record<string, unknown>).dataIndex),
+  }));
+
+/** 导出入口类型 */
+type ExportEntry = 'selected' | 'filtered';
+
 export default function OrderList() {
   const [list, setList] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
@@ -51,6 +64,11 @@ export default function OrderList() {
   const [selectionState, setSelectionState] = useState<SelectionState>(
     createInitialSelectionState,
   );
+
+  // 导出弹窗状态
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportTitle, setExportTitle] = useState('');
+  const [exportEntry, setExportEntry] = useState<ExportEntry>('selected');
 
   // 拉取订单数据，依赖 query/page/pageSize 变化时重新请求
   const loadData = useCallback(async () => {
@@ -107,9 +125,64 @@ export default function OrderList() {
     setSelectionState(nextState);
   };
 
+  // ---- 导出逻辑 ----
+
+  /** 计算当前已选条数 */
+  const selectedCount =
+    selectionState.mode === SelectionMode.MANUAL
+      ? selectionState.selectedIds.size
+      : Math.max(0, total - selectionState.excludedIds.size);
+
+  /** 点击"导出已选" */
+  const handleExportSelected = () => {
+    setExportEntry('selected');
+    setExportTitle(`导出已选（${selectedCount} 条）`);
+    setExportOpen(true);
+  };
+
+  /** 点击"导出筛选结果" */
+  const handleExportFiltered = () => {
+    setExportEntry('filtered');
+    setExportTitle(`导出筛选结果（${total} 条）`);
+    setExportOpen(true);
+  };
+
+  /** 弹窗确认：拼接导出参数 */
+  const handleExportConfirm = (filename: string, fields: string[]) => {
+    const params: ExportParams = { filename, fields, mode: ExportMode.SELECTED };
+
+    if (exportEntry === 'selected') {
+      if (selectionState.mode === SelectionMode.MANUAL) {
+        params.mode = ExportMode.SELECTED;
+        params.selectedIds = Array.from(selectionState.selectedIds);
+      } else {
+        params.mode = ExportMode.ALL_EXCLUDE;
+        params.excludedIds = Array.from(selectionState.excludedIds);
+        params.query = query;
+      }
+    } else {
+      params.mode = ExportMode.FILTERED;
+      params.query = query;
+    }
+
+    // 暂不发送后端请求，仅输出拼接的参数
+    console.log('导出参数：', params);
+    setExportOpen(false);
+  };
+
   return (
     <div className={styles.page}>
-      <div className={styles.header}>订单管理</div>
+      <div className={styles.headerRow}>
+        <div className={styles.header}>订单管理</div>
+        <Space>
+          <Button onClick={handleExportSelected} disabled={selectedCount === 0}>
+            导出已选
+          </Button>
+          <Button onClick={handleExportFiltered} disabled={total === 0}>
+            导出筛选结果
+          </Button>
+        </Space>
+      </div>
       <OrderQueryForm onSearch={handleSearch} onReset={handleReset} />
       <PageTable<Order>
         rowKey="id"
@@ -123,6 +196,13 @@ export default function OrderList() {
         selectionState={selectionState}
         onSelectionChange={handleSelectionChange}
         filteredTotal={total}
+      />
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        title={exportTitle}
+        columnOptions={exportColumnOptions}
+        onConfirm={handleExportConfirm}
       />
     </div>
   );

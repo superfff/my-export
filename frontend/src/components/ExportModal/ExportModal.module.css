@@ -1,0 +1,9 @@
+.form {
+  margin-top: 16px;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}

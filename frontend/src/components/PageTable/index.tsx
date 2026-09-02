@@ -239,8 +239,11 @@ export default function PageTable<T extends object>({
     <div className={styles.container}>
       {selectedCount > 0 && (
         <div className={styles.selectionNotice}>
-          已勾选 <span className={styles.selectionCount}>{selectedCount}</span> 条
-          {mode === SelectionMode.ALL && <span className={styles.modeTag}>（全选模式）</span>}
+          {mode === SelectionMode.MANUAL ? (
+            <>已勾选 <span className={styles.selectionCount}>{selectedCount}</span> 条</>
+          ) : (
+            <>全部筛选结果，排除 <span className={styles.selectionCount}>{excludedIds.size}</span> 条</>
+          )}
         </div>
       )}
       <div ref={wrapRef} className={styles.tableWrap}>

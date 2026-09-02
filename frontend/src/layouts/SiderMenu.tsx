@@ -6,9 +6,11 @@ interface SiderMenuProps {
   routes: RouteConfig[];
   activePath: string;
   onNavigate: (path: string) => void;
+  /** 后端健康状态 */
+  isHealthy?: boolean;
 }
 
-export default function SiderMenu({ routes, activePath, onNavigate }: SiderMenuProps) {
+export default function SiderMenu({ routes, activePath, onNavigate, isHealthy = true }: SiderMenuProps) {
   const items = routes.map((r) => ({
     key: r.path,
     label: r.name,
@@ -25,6 +27,9 @@ export default function SiderMenu({ routes, activePath, onNavigate }: SiderMenuP
         items={items}
         onClick={({ key }) => onNavigate(key)}
       />
+      <div className={`${styles.healthBar} ${isHealthy ? styles.healthy : styles.unhealthy}`}>
+        {isHealthy ? '后端服务正常' : '后端服务异常'}
+      </div>
     </aside>
   );
 }
