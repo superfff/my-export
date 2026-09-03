@@ -3,6 +3,7 @@ import { Table, Pagination, Checkbox, Dropdown } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { SelectionMode } from '../../types/order';
 import type { SelectionState } from '../../types/order';
+import { MAX_SELECTION } from '../../constants/order';
 import styles from './PageTable.module.css';
 
 interface PageTableProps<T> {
@@ -20,6 +21,8 @@ interface PageTableProps<T> {
   onSelectionChange?: (state: SelectionState) => void;
   /** 当前筛选条件下的数据总条数（全选模式下计算勾选数用） */
   filteredTotal?: number;
+  /** 选择达到上限时的 toast 回调 */
+  onSelectionLimit?: (mode: SelectionMode) => void;
 }
 
 /** 创建初始选择状态 */
@@ -35,6 +38,10 @@ export function createInitialSelectionState(): SelectionState {
  * 可复用的表格 + 分页组件：
  * 表格区域占满剩余空间、内容超出时内部滚动（表头固定），底部分页器固定。
  * 支持双模式行选择：手动勾选 / 全选。
+ *
+ * 选择上限：
+ * - 手动模式：selectedIds.size ≤ MAX_SELECTION
+ * - 全选模式：excludedIds.size ≤ MAX_SELECTION
  */
 export default function PageTable<T extends object>({
   rowKey,
@@ -48,6 +55,7 @@ export default function PageTable<T extends object>({
   selectionState,
   onSelectionChange,
   filteredTotal = 0,
+  onSelectionLimit,
 }: PageTableProps<T>) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [bodyHeight, setBodyHeight] = useState(0);
@@ -139,17 +147,37 @@ export default function PageTable<T extends object>({
   const handleHeaderCheck = (checked: boolean) => {
     if (mode === SelectionMode.MANUAL) {
       const newSet = new Set(selectedIds);
-      for (const id of currentPageIds) {
-        if (checked) newSet.add(id);
-        else newSet.delete(id);
+      if (checked) {
+        // 勾选当前页所有行，但不超过上限
+        for (const id of currentPageIds) {
+          if (newSet.size >= MAX_SELECTION) break;
+          newSet.add(id);
+        }
+        if (newSet.size >= MAX_SELECTION && onSelectionLimit) {
+          onSelectionLimit(SelectionMode.MANUAL);
+        }
+      } else {
+        for (const id of currentPageIds) {
+          newSet.delete(id);
+        }
       }
       onSelectionChange({ ...selectionState, selectedIds: newSet });
     } else {
       // ALL 模式：checked=false 表示当前页全反选，checked=true 表示当前页全恢复
       const newSet = new Set(excludedIds);
-      for (const id of currentPageIds) {
-        if (checked) newSet.delete(id);
-        else newSet.add(id);
+      if (!checked) {
+        // 反选当前页所有行，但不超过上限
+        for (const id of currentPageIds) {
+          if (newSet.size >= MAX_SELECTION) break;
+          newSet.add(id);
+        }
+        if (newSet.size >= MAX_SELECTION && onSelectionLimit) {
+          onSelectionLimit(SelectionMode.ALL);
+        }
+      } else {
+        for (const id of currentPageIds) {
+          newSet.delete(id);
+        }
       }
       onSelectionChange({ ...selectionState, excludedIds: newSet });
     }
@@ -159,12 +187,22 @@ export default function PageTable<T extends object>({
   const handleRowSelect = (record: T, checked: boolean) => {
     const id = getRowId(record);
     if (mode === SelectionMode.MANUAL) {
+      if (checked && selectedIds.size >= MAX_SELECTION) {
+        // 达到上限，阻止勾选并提示
+        if (onSelectionLimit) onSelectionLimit(SelectionMode.MANUAL);
+        return;
+      }
       const newSet = new Set(selectedIds);
       if (checked) newSet.add(id);
       else newSet.delete(id);
       onSelectionChange({ ...selectionState, selectedIds: newSet });
     } else {
       // ALL 模式：checked=false → 加入排除，checked=true → 从排除中移除
+      if (!checked && excludedIds.size >= MAX_SELECTION) {
+        // 反选达到上限，阻止并提示
+        if (onSelectionLimit) onSelectionLimit(SelectionMode.ALL);
+        return;
+      }
       const newSet = new Set(excludedIds);
       if (checked) newSet.delete(id);
       else newSet.add(id);
@@ -175,6 +213,7 @@ export default function PageTable<T extends object>({
   /** 切换选择模式 */
   const handleModeChange = (newMode: SelectionMode) => {
     if (newMode === mode) return;
+    // 切换到全选模式时，清空手动选择的数据
     onSelectionChange({
       mode: newMode,
       selectedIds: new Set<number>(),
@@ -240,9 +279,9 @@ export default function PageTable<T extends object>({
       {selectedCount > 0 && (
         <div className={styles.selectionNotice}>
           {mode === SelectionMode.MANUAL ? (
-            <>已勾选 <span className={styles.selectionCount}>{selectedCount}</span> 条</>
+            <>已勾选 <span className={styles.selectionCount}>{selectedCount}</span>/{MAX_SELECTION} 条</>
           ) : (
-            <>全部筛选结果，排除 <span className={styles.selectionCount}>{excludedIds.size}</span> 条</>
+            <>全部筛选结果，排除 <span className={styles.selectionCount}>{excludedIds.size}</span>/{MAX_SELECTION} 条</>
           )}
         </div>
       )}

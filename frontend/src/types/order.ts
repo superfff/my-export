@@ -14,6 +14,12 @@ export interface Order {
   remark?: string;
 }
 
+/** 排序字段白名单 */
+export type SortField = 'amount' | 'createdAt';
+
+/** 排序方向白名单 */
+export type SortOrder = 'asc' | 'desc';
+
 /** 订单查询条件（对应 GET /api/order 的 query 参数） */
 export interface OrderQuery {
   orderNo?: string;
@@ -22,6 +28,8 @@ export interface OrderQuery {
   status?: OrderStatus;
   startTime?: number;
   endTime?: number;
+  sortField?: SortField;
+  sortOrder?: SortOrder;
   page?: number;
   pageSize?: number;
 }
@@ -37,6 +45,8 @@ export interface ApiResponse<T> {
   code: number;
   message: string;
   data: T;
+  /** 日志链路追踪 ID，由后端 TraceIdFilter 注入 */
+  traceId?: string;
 }
 
 /** 表格选择模式 */

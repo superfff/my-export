@@ -13,6 +13,3 @@
 2. MVC 分层：`controller`（接口）→ `service`（业务）→ `mapper`（数据访问），DTO 放在 `dto/` 包
 3. 接口统一前缀 `/api`，健康检查 `/actuator/health`
 4. 数据访问层使用 MyBatis-Plus，数据库为 MySQL
-
-## 数据库
-- 库名 `order_db`，表 `t_order`；初始化脚本在 `docker/mysql/init/01-init.sql`

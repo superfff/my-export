@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Tag, Button, Space } from 'antd';
+import { Tag, Button, Space, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import PageTable from '../../components/PageTable';
 import { createInitialSelectionState } from '../../components/PageTable';
@@ -7,7 +7,7 @@ import ExportModal from '../../components/ExportModal';
 import OrderQueryForm from './OrderQueryForm';
 import type { OrderFormValues } from './OrderQueryForm';
 import { fetchOrders } from '../../http/order';
-import { ORDER_STATUS } from '../../constants/order';
+import { ORDER_STATUS, MAX_SELECTION } from '../../constants/order';
 import type { Order, OrderQuery, OrderStatus, SelectionState, ExportParams } from '../../types/order';
 import { ExportMode, SelectionMode } from '../../types/order';
 import { formatDateTime } from '../../utils/format';
@@ -125,6 +125,15 @@ export default function OrderList() {
     setSelectionState(nextState);
   };
 
+  /** 选择达到上限时的 toast 提示 */
+  const handleSelectionLimit = (currentMode: SelectionMode) => {
+    if (currentMode === SelectionMode.MANUAL) {
+      message.warning(`最多只能勾选 ${MAX_SELECTION} 条数据`);
+    } else {
+      message.warning(`最多只能反选 ${MAX_SELECTION} 条数据`);
+    }
+  };
+
   // ---- 导出逻辑 ----
 
   /** 计算当前已选条数 */
@@ -176,7 +185,7 @@ export default function OrderList() {
         <div className={styles.header}>订单管理</div>
         <Space>
           <Button onClick={handleExportSelected} disabled={selectedCount === 0}>
-            导出已选
+            导出已选{selectedCount > 0 ? `（${selectedCount}）` : ''}
           </Button>
           <Button onClick={handleExportFiltered} disabled={total === 0}>
             导出筛选结果
@@ -195,6 +204,7 @@ export default function OrderList() {
         onPageChange={handlePageChange}
         selectionState={selectionState}
         onSelectionChange={handleSelectionChange}
+        onSelectionLimit={handleSelectionLimit}
         filteredTotal={total}
       />
       <ExportModal

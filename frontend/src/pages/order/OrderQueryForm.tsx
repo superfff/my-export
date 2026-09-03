@@ -1,7 +1,7 @@
 import { Form, Input, Select, DatePicker, Button, Space } from 'antd';
 import type { Dayjs } from 'dayjs';
 import { ORDER_STATUS_OPTIONS } from '../../constants/order';
-import type { OrderStatus } from '../../types/order';
+import type { OrderStatus, SortField, SortOrder } from '../../types/order';
 import styles from './index.module.css';
 
 const { RangePicker } = DatePicker;
@@ -13,7 +13,21 @@ export interface OrderFormValues {
   phone?: string;
   status?: OrderStatus;
   createdRange?: [Dayjs, Dayjs] | null;
+  sortField?: SortField;
+  sortOrder?: SortOrder;
 }
+
+/** 排序字段选项 */
+const SORT_FIELD_OPTIONS = [
+  { value: 'createdAt', label: '创建时间' },
+  { value: 'amount', label: '订单金额' },
+];
+
+/** 排序方向选项 */
+const SORT_ORDER_OPTIONS = [
+  { value: 'asc', label: '升序' },
+  { value: 'desc', label: '降序' },
+];
 
 interface OrderQueryFormProps {
   onSearch: (values: OrderFormValues) => void;
@@ -49,6 +63,12 @@ export default function OrderQueryForm({ onSearch, onReset }: OrderQueryFormProp
         </Form.Item>
         <Form.Item name="createdRange" label="创建时间">
           <RangePicker />
+        </Form.Item>
+        <Form.Item name="sortField" label="排序字段">
+          <Select placeholder="默认" allowClear options={SORT_FIELD_OPTIONS} style={{ width: 120 }} />
+        </Form.Item>
+        <Form.Item name="sortOrder" label="排序方向">
+          <Select placeholder="默认" allowClear options={SORT_ORDER_OPTIONS} style={{ width: 100 }} />
         </Form.Item>
         <Form.Item>
           <Space>

@@ -18,6 +18,8 @@ interface RawResponse<T> {
   code: number;
   message?: string;
   data: T;
+  /** 日志链路追踪 ID，由后端 TraceIdFilter 注入 */
+  traceId?: string;
 }
 
 /** 发起请求并解析后端统一响应，code !== 0 时抛错 */

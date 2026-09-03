@@ -2,7 +2,9 @@ package com.example.order.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.example.order.common.ApiResponse;
 import com.example.order.common.PageResult;
+import com.example.order.common.SortParamValidator;
 import com.example.order.dto.OrderQueryDTO;
 import com.example.order.dto.OrderVO;
 import com.example.order.entity.Order;
@@ -32,6 +34,12 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     public PageResult<OrderVO> page(OrderQueryDTO query) {
+        // 排序参数白名单校验
+        String sortError = SortParamValidator.validate(query.sortField(), query.sortOrder());
+        if (sortError != null) {
+            throw new IllegalArgumentException(sortError);
+        }
+
         long pageNum = query.page() == null || query.page() < 1 ? 1 : query.page();
         long pageSize = query.pageSize() == null || query.pageSize() < 1 ? 20 : query.pageSize();
 
@@ -47,12 +55,36 @@ public class OrderServiceImpl implements OrderService {
         if (query.endTime() != null) {
             wrapper.le(Order::getCreatedAt, toLocalDateTime(query.endTime()));
         }
-        wrapper.orderByDesc(Order::getCreatedAt);
+
+        // 排序：传了 sortField/sortOrder 时按指定字段排序，否则默认 created_at DESC
+        // 稳定分页：始终追加 id ASC 作为第二排序键，避免分页漂移
+        if (query.sortField() != null && query.sortOrder() != null) {
+            boolean isAsc = "asc".equalsIgnoreCase(query.sortOrder());
+            applySort(wrapper, query.sortField(), isAsc);
+        } else {
+            wrapper.orderByDesc(Order::getCreatedAt);
+        }
+        // 第二排序键：id 升序，确保排序值相同时分页结果稳定
+        wrapper.orderByAsc(Order::getId);
 
         Page<Order> page = orderMapper.selectPage(new Page<>(pageNum, pageSize), wrapper);
 
         List<OrderVO> list = page.getRecords().stream().map(this::toVO).toList();
         return new PageResult<>(list, page.getTotal(), pageNum, pageSize);
+    }
+
+    /**
+     * 根据字段名和方向应用排序。
+     * 使用 LambdaQueryWrapper 的类型安全排序，避免字符串拼接。
+     */
+    private void applySort(LambdaQueryWrapper<Order> wrapper, String sortField, boolean isAsc) {
+        if ("amount".equals(sortField)) {
+            if (isAsc) wrapper.orderByAsc(Order::getAmount);
+            else wrapper.orderByDesc(Order::getAmount);
+        } else if ("createdAt".equals(sortField)) {
+            if (isAsc) wrapper.orderByAsc(Order::getCreatedAt);
+            else wrapper.orderByDesc(Order::getCreatedAt);
+        }
     }
 
     private LocalDateTime toLocalDateTime(long epochMillis) {

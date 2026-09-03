@@ -14,3 +14,6 @@ export const ORDER_STATUS: Record<OrderStatus, StatusMeta> = {
 export const ORDER_STATUS_OPTIONS = (Object.entries(ORDER_STATUS) as [string, StatusMeta][]).map(
   ([value, { text }]) => ({ value: Number(value) as OrderStatus, label: text }),
 );
+
+/** 选择上限：手动模式最多勾选 100 条，全选模式最多反选 100 条 */
+export const MAX_SELECTION = 100;

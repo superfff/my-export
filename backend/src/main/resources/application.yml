@@ -10,6 +10,14 @@ spring:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:order_db}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: ${DB_USER:order_user}
     password: ${DB_PASSWORD:order_pass}
+  flyway:
+    # 开启 Flyway，应用启动时自动执行 db/migration 下的版本脚本
+    enabled: true
+    # 迁移脚本所在位置（默认值，显式声明以便维护者理解）
+    locations: classpath:db/migration
+    # baseline-on-migrate：当数据库已存在但无 flyway_schema_history 表时，自动创建基线
+    # 避免首次在已有数据库上启用 Flyway 时报错
+    baseline-on-migrate: true
 
 mybatis-plus:
   configuration:

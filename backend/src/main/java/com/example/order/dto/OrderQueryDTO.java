@@ -9,6 +9,8 @@ package com.example.order.dto;
  * @param status       订单状态（1/2/3，精确匹配）
  * @param startTime    创建时间起点（毫秒时间戳）
  * @param endTime      创建时间终点（毫秒时间戳）
+ * @param sortField    排序字段（白名单：amount / createdAt，为空时走默认排序）
+ * @param sortOrder    排序方向（白名单：asc / desc，为空时走默认排序）
  * @param page         页码，从 1 开始
  * @param pageSize     每页条数
  */
@@ -19,6 +21,8 @@ public record OrderQueryDTO(
         Integer status,
         Long startTime,
         Long endTime,
+        String sortField,
+        String sortOrder,
         Long page,
         Long pageSize
 ) {
