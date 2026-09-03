@@ -58,15 +58,25 @@ export default function PageTable<T extends object>({
   onSelectionLimit,
 }: PageTableProps<T>) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [bodyHeight, setBodyHeight] = useState(0);
+  const [scrollY, setScrollY] = useState(0);
 
-  // 测量表格可用高度，作为 antd Table 的 scroll.y
+  // 测量表格滚动内容区可用高度，作为 antd Table 的 scroll.y。
+  // antd 固定表头是"表头区块 + 高度为 y 的滚动 body"叠放渲染，总高会比容器多出表头高度，
+  // 故用"容器高 - 固定表头高"回填 y，避免末行被底部裁切。
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return undefined;
-    const observer = new ResizeObserver((entries) => {
-      setBodyHeight(entries[0].contentRect.height);
-    });
+
+    const measure = () => {
+      const headerEl =
+        el.querySelector<HTMLElement>('.ant-table-header') ??
+        el.querySelector<HTMLElement>('.ant-table-thead');
+      const headerH = headerEl ? headerEl.offsetHeight : 0;
+      setScrollY(Math.max(0, el.clientHeight - headerH));
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -82,7 +92,7 @@ export default function PageTable<T extends object>({
             dataSource={dataSource}
             loading={loading}
             pagination={false}
-            scroll={{ x: 'max-content', y: bodyHeight > 0 ? bodyHeight : undefined }}
+            scroll={{ x: 'max-content', y: scrollY > 0 ? scrollY : undefined }}
           />
         </div>
         <div className={styles.pagination}>
@@ -292,7 +302,7 @@ export default function PageTable<T extends object>({
           dataSource={dataSource}
           loading={loading}
           pagination={false}
-          scroll={{ x: 'max-content', y: bodyHeight > 0 ? bodyHeight : undefined }}
+          scroll={{ x: 'max-content', y: scrollY > 0 ? scrollY : undefined }}
           rowClassName={() => styles.row}
         />
       </div>

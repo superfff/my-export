@@ -1,4 +1,4 @@
-package com.example.order.common;
+package com.example.common;
 
 import java.util.Set;
 

@@ -1,6 +1,6 @@
 package com.example.order.service;
 
-import com.example.order.common.PageResult;
+import com.example.common.PageResult;
 import com.example.order.dto.OrderQueryDTO;
 import com.example.order.dto.OrderVO;
 

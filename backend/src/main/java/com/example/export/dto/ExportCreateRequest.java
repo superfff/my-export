@@ -1,6 +1,6 @@
-package com.example.order.dto;
+package com.example.export.dto;
 
-import com.example.order.enums.ExportMode;
+import com.example.export.enums.ExportMode;
 
 import java.util.List;
 

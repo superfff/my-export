@@ -1,7 +1,7 @@
-package com.example.order.mapper;
+package com.example.export.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.example.order.entity.ExportJob;
+import com.example.export.entity.ExportJob;
 import org.apache.ibatis.annotations.Mapper;
 
 /**

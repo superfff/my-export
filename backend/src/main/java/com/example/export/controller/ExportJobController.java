@@ -1,10 +1,13 @@
-package com.example.order.controller;
+package com.example.export.controller;
 
-import com.example.order.common.ApiResponse;
-import com.example.order.dto.ExportCreateRequest;
-import com.example.order.dto.ExportJobVO;
-import com.example.order.service.ExportJobService;
+import com.example.common.ApiResponse;
+import com.example.common.PageResult;
+import com.example.export.dto.ExportCreateRequest;
+import com.example.export.dto.ExportJobQueryDTO;
+import com.example.export.dto.ExportJobVO;
+import com.example.export.service.ExportJobService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -12,8 +15,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 异步导出任务 RESTful 接口。
- * 本阶段仅提供创建；幂等 Key 缺失 / 长度等校验在 Service 层给清晰 400。
+ * 异步导出任务 RESTful 接口。创建（POST）与列表（GET）共用同一资源 /api/export-job。
+ * 创建：幂等 Key 缺失 / 长度等校验在 Service 层给清晰 400；
+ * 列表：只读分页，status 非法抛 IllegalArgumentException → HTTP 200 + code=400。
  */
 @RestController
 @RequestMapping("/api/export-job")
@@ -35,5 +39,15 @@ public class ExportJobController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         ExportJobVO vo = exportJobService.create(request, idempotencyKey);
         return ResponseEntity.ok(ApiResponse.ok(vo));
+    }
+
+    /**
+     * 导出任务分页查询（导出中心列表）。
+     * GET /api/export-job?status=PENDING&page=1&pageSize=20
+     * status 不传 = 全部；列表不支持 sortField/sortOrder，固定按创建时间降序 + id 降序。
+     */
+    @GetMapping
+    public ApiResponse<PageResult<ExportJobVO>> list(ExportJobQueryDTO query) {
+        return ApiResponse.ok(exportJobService.page(query));
     }
 }

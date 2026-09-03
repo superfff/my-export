@@ -37,6 +37,12 @@ interface OrderQueryFormProps {
 export default function OrderQueryForm({ onSearch, onReset }: OrderQueryFormProps) {
   const [form] = Form.useForm<OrderFormValues>();
 
+  /** 排序默认值：创建时间 降序（不可清空，与页面查询初始状态一致） */
+  const DEFAULT_SORT: Pick<OrderFormValues, 'sortField' | 'sortOrder'> = {
+    sortField: 'createdAt',
+    sortOrder: 'desc',
+  };
+
   const handleSearch = () => {
     onSearch(form.getFieldsValue());
   };
@@ -48,7 +54,12 @@ export default function OrderQueryForm({ onSearch, onReset }: OrderQueryFormProp
 
   return (
     <div className={styles.queryCard}>
-      <Form form={form} layout="inline" onFinish={handleSearch}>
+      <Form
+        form={form}
+        layout="inline"
+        onFinish={handleSearch}
+        initialValues={DEFAULT_SORT}
+      >
         <Form.Item name="orderNo" label="订单号">
           <Input placeholder="请输入订单号" allowClear style={{ width: 160 }} />
         </Form.Item>
@@ -65,10 +76,10 @@ export default function OrderQueryForm({ onSearch, onReset }: OrderQueryFormProp
           <RangePicker />
         </Form.Item>
         <Form.Item name="sortField" label="排序字段">
-          <Select placeholder="默认" allowClear options={SORT_FIELD_OPTIONS} style={{ width: 120 }} />
+          <Select options={SORT_FIELD_OPTIONS} style={{ width: 120 }} />
         </Form.Item>
         <Form.Item name="sortOrder" label="排序方向">
-          <Select placeholder="默认" allowClear options={SORT_ORDER_OPTIONS} style={{ width: 100 }} />
+          <Select options={SORT_ORDER_OPTIONS} style={{ width: 100 }} />
         </Form.Item>
         <Form.Item>
           <Space>

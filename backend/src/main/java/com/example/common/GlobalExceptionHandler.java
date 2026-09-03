@@ -1,4 +1,4 @@
-package com.example.order.common;
+package com.example.common;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -22,10 +22,10 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 导出业务异常：按异常携带的 HTTP 状态码（400/409）返回真实状态。
+     * 通用业务异常：按异常携带的 HTTP 状态码（400/409）返回真实状态。
      */
-    @ExceptionHandler(ExportBizException.class)
-    public ResponseEntity<ApiResponse<Void>> handleExportBiz(ExportBizException e) {
+    @ExceptionHandler(BizException.class)
+    public ResponseEntity<ApiResponse<Void>> handleBiz(BizException e) {
         return ResponseEntity.status(e.getHttpStatus())
                 .body(ApiResponse.error(e.getHttpStatus(), e.getMessage()));
     }

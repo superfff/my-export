@@ -1,7 +1,7 @@
 package com.example.order.controller;
 
-import com.example.order.common.ApiResponse;
-import com.example.order.common.PageResult;
+import com.example.common.ApiResponse;
+import com.example.common.PageResult;
 import com.example.order.dto.OrderQueryDTO;
 import com.example.order.dto.OrderVO;
 import com.example.order.service.OrderService;

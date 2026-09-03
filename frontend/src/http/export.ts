@@ -1,5 +1,5 @@
-import { post } from './request';
-import type { ExportJobVO, ExportMode } from '../types/order';
+import { get, post } from './request';
+import type { ExportCenterJob, ExportJobStatus, ExportJobVO, ExportMode, PageResult } from '../types/order';
 
 /** 创建导出任务的请求体（与后端 ExportCreateRequest 对齐，键序固定便于生成 sig） */
 export interface ExportJobRequest {
@@ -27,4 +27,16 @@ export interface ExportJobRequest {
  */
 export function submitExportJob(body: ExportJobRequest, idempotencyKey: string): Promise<ExportJobVO> {
   return post<ExportJobVO>('/api/export-job', body, { headers: { 'Idempotency-Key': idempotencyKey } });
+}
+
+/** 导出中心分页查询参数：不传 status = 全部（"全部" tab） */
+export interface ExportJobListQuery {
+  status?: ExportJobStatus;
+  page?: number;
+  pageSize?: number;
+}
+
+/** 导出中心分页查询：不传 status = 全部；默认后端按创建时间降序 */
+export function fetchExportJobs(query: ExportJobListQuery = {}): Promise<PageResult<ExportCenterJob>> {
+  return get<PageResult<ExportCenterJob>>('/api/export-job', query);
 }

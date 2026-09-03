@@ -19,6 +19,12 @@ import styles from './index.module.css';
 
 const DEFAULT_PAGE_SIZE = 20;
 
+/** 排序默认值：创建时间 降序（与表单 initialValues 一致；首次加载与重置都显式携带 sort 参数） */
+const DEFAULT_SORT: Pick<OrderQuery, 'sortField' | 'sortOrder'> = {
+  sortField: 'createdAt',
+  sortOrder: 'desc',
+};
+
 const columns: TableColumnsType<Order> = [
   { title: '订单号', dataIndex: 'orderNo', width: 190, ellipsis: true },
   { title: '客户名称', dataIndex: 'customerName', width: 120 },
@@ -104,7 +110,7 @@ export default function OrderList() {
   const [list, setList] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [query, setQuery] = useState<OrderQuery>({});
+  const [query, setQuery] = useState<OrderQuery>({ ...DEFAULT_SORT });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
@@ -166,7 +172,7 @@ export default function OrderList() {
   };
 
   const handleReset = () => {
-    setQuery({});
+    setQuery({ ...DEFAULT_SORT });
     setPage(1);
     // 重置时清空勾选
     setSelectionState(createInitialSelectionState());

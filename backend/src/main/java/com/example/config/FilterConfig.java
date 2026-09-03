@@ -1,6 +1,6 @@
-package com.example.order.config;
+package com.example.config;
 
-import com.example.order.common.TraceIdFilter;
+import com.example.common.TraceIdFilter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

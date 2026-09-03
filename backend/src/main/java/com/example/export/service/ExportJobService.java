@@ -1,7 +1,9 @@
-package com.example.order.service;
+package com.example.export.service;
 
-import com.example.order.dto.ExportCreateRequest;
-import com.example.order.dto.ExportJobVO;
+import com.example.common.PageResult;
+import com.example.export.dto.ExportCreateRequest;
+import com.example.export.dto.ExportJobQueryDTO;
+import com.example.export.dto.ExportJobVO;
 
 /**
  * 异步导出任务业务层。本阶段仅负责：校验、幂等去重、范围快照聚合与入库；
@@ -18,4 +20,13 @@ public interface ExportJobService {
      * @return 入库后读回的导出任务 VO（含 expectedTotal / maxOrderId）
      */
     ExportJobVO create(ExportCreateRequest request, String idempotencyKey);
+
+    /**
+     * 导出任务分页查询（导出中心列表）。
+     * status 不传 = 全部；固定按创建时间降序 + id 降序，保证分页稳定。
+     *
+     * @param query 列表查询参数（status 可选；page/pageSize 缺省非法归一 1 / 20）
+     * @return 分页结果，行对象复用 {@link ExportJobVO}
+     */
+    PageResult<ExportJobVO> page(ExportJobQueryDTO query);
 }

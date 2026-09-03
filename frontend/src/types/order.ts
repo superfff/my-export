@@ -98,6 +98,15 @@ export interface ExportJobVO {
   createdAt: string;
 }
 
+/** 导出中心列表行：继承 ExportJobVO；以下 4 个"任务运行指标"为预留，
+ *  后端当前不返回（真正导出阶段才填充），本期渲染按缺省（'-'）处理 */
+export interface ExportCenterJob extends ExportJobVO {
+  actualTotal?: number | null; // 导出实际条数
+  progress?: number | null; // 进度百分比 0-100
+  finishedAt?: string | null; // 完成时间
+  fileSize?: number | null; // 文件大小（字节）
+}
+
 /** 导出请求参数 */
 export interface ExportParams {
   /** 导出文件名 */

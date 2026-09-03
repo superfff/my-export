@@ -1,4 +1,4 @@
-package com.example.order.entity;
+package com.example.export.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;

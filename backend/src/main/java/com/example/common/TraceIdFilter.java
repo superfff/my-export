@@ -1,4 +1,4 @@
-package com.example.order.common;
+package com.example.common;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;

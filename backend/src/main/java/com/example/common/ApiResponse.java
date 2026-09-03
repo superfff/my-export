@@ -1,4 +1,4 @@
-package com.example.order.common;
+package com.example.common;
 
 /**
  * 统一响应包装。约定 code=0 表示成功，非 0 表示失败。

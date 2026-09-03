@@ -1,16 +1,19 @@
-package com.example.order.service.impl;
+package com.example.export.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.example.order.common.ExportBizException;
-import com.example.order.dto.ExportCreateRequest;
-import com.example.order.dto.ExportJobVO;
-import com.example.order.entity.ExportJob;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.example.common.BizException;
+import com.example.common.PageResult;
+import com.example.export.dto.ExportCreateRequest;
+import com.example.export.dto.ExportJobQueryDTO;
+import com.example.export.dto.ExportJobVO;
+import com.example.export.entity.ExportJob;
+import com.example.export.enums.ExportJobStatus;
+import com.example.export.enums.ExportMode;
+import com.example.export.mapper.ExportJobMapper;
 import com.example.order.entity.Order;
-import com.example.order.enums.ExportJobStatus;
-import com.example.order.enums.ExportMode;
-import com.example.order.mapper.ExportJobMapper;
 import com.example.order.mapper.OrderMapper;
-import com.example.order.service.ExportJobService;
+import com.example.export.service.ExportJobService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DuplicateKeyException;
@@ -27,12 +30,14 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
 /**
  * 导出任务业务实现。
- * 单方法 create：校验 → request_hash → 订单库聚合快照 → 入库（捕获唯一键冲突按幂等规则返回 409）。
+ * create：校验 → request_hash → 订单库聚合快照 → 入库（捕获唯一键冲突按幂等规则返回 409）；
+ * page：只读分页查询（导出中心列表），共享同一套 实体→VO 映射。
  */
 @Service
 public class ExportJobServiceImpl implements ExportJobService {
@@ -62,10 +67,10 @@ public class ExportJobServiceImpl implements ExportJobService {
         // 1. 归一化 + 校验（非法即抛 400）
         String key = idempotencyKey == null ? null : idempotencyKey.trim();
         if (!StringUtils.hasText(key)) {
-            throw new ExportBizException(400, "缺少幂等键 Idempotency-Key");
+            throw new BizException(400, "缺少幂等键 Idempotency-Key");
         }
         if (key.length() > 64) {
-            throw new ExportBizException(400, "幂等键长度不能超过 64");
+            throw new BizException(400, "幂等键长度不能超过 64");
         }
 
         ExportMode mode = requireMode(request);
@@ -106,15 +111,52 @@ public class ExportJobServiceImpl implements ExportJobService {
         }
 
         // 读回以取 DB 默认时间戳，映射 VO
-        ExportJob saved = exportJobMapper.selectById(job.getId());
+        return toVO(exportJobMapper.selectById(job.getId()));
+    }
+
+    @Override
+    public PageResult<ExportJobVO> page(ExportJobQueryDTO query) {
+        // 1. status 规范化校验：trim 后非空才生效，须 ∈ 四枚举；非法抛 IllegalArgumentException（列表错误语义 HTTP 200 + code=400）
+        String status = query.status() == null ? null : query.status().trim();
+        if (StringUtils.hasText(status)) {
+            String upper = status.toUpperCase(Locale.ROOT);
+            try {
+                ExportJobStatus.valueOf(upper);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("不支持的状态筛选：" + status
+                        + "，仅支持：PENDING、RUNNING、SUCCESS、FAILED");
+            }
+            status = upper;
+        } else {
+            status = null;
+        }
+
+        // 2. page/pageSize 归一化（缺省 / <1 → 1 / 20）
+        long pageNum = query.page() == null || query.page() < 1 ? 1 : query.page();
+        long pageSize = query.pageSize() == null || query.pageSize() < 1 ? 20 : query.pageSize();
+
+        // 3. 列表固定按创建时间降序 + id 降序（同刻创建按较新 id 排前，分页稳定）
+        LambdaQueryWrapper<ExportJob> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(status != null, ExportJob::getStatus, status);
+        wrapper.orderByDesc(ExportJob::getCreatedAt);
+        wrapper.orderByDesc(ExportJob::getId);
+
+        // 4. 分页查询并映射 VO（行对象与创建响应共用同一 ExportJobVO，避免口径漂移）
+        Page<ExportJob> page = exportJobMapper.selectPage(new Page<>(pageNum, pageSize), wrapper);
+        List<ExportJobVO> list = page.getRecords().stream().map(this::toVO).toList();
+        return new PageResult<>(list, page.getTotal(), pageNum, pageSize);
+    }
+
+    /** 实体 → VO：创建与列表共用同一套映射，避免两处拼 VO 漂移 */
+    private ExportJobVO toVO(ExportJob job) {
         return new ExportJobVO(
-                saved.getId(),
-                saved.getFilename(),
-                ExportMode.valueOf(saved.getExportMode()),
-                ExportJobStatus.valueOf(saved.getStatus()),
-                saved.getExpectedTotal(),
-                saved.getMaxOrderId(),
-                saved.getCreatedAt()
+                job.getId(),
+                job.getFilename(),
+                ExportMode.valueOf(job.getExportMode()),
+                ExportJobStatus.valueOf(job.getStatus()),
+                job.getExpectedTotal(),
+                job.getMaxOrderId(),
+                job.getCreatedAt()
         );
     }
 
@@ -122,7 +164,7 @@ public class ExportJobServiceImpl implements ExportJobService {
 
     private ExportMode requireMode(ExportCreateRequest request) {
         if (request.mode() == null) {
-            throw new ExportBizException(400, "导出模式 mode 不能为空");
+            throw new BizException(400, "导出模式 mode 不能为空");
         }
         return request.mode();
     }
@@ -130,7 +172,7 @@ public class ExportJobServiceImpl implements ExportJobService {
     /** fields：trim → 保序去重 → 校验白名单，返回规范化列清单 */
     private List<String> normalizeFields(List<String> fields) {
         if (fields == null || fields.isEmpty()) {
-            throw new ExportBizException(400, "导出字段不能为空");
+            throw new BizException(400, "导出字段不能为空");
         }
         List<String> normalized = new ArrayList<>();
         for (String field : fields) {
@@ -139,14 +181,14 @@ public class ExportJobServiceImpl implements ExportJobService {
                 continue;
             }
             if (!COLUMN_WHITELIST.contains(f)) {
-                throw new ExportBizException(400, "包含不支持的导出字段：" + f);
+                throw new BizException(400, "包含不支持的导出字段：" + f);
             }
             if (!normalized.contains(f)) {
                 normalized.add(f);
             }
         }
         if (normalized.isEmpty()) {
-            throw new ExportBizException(400, "导出字段不能为空");
+            throw new BizException(400, "导出字段不能为空");
         }
         return normalized;
     }
@@ -154,10 +196,10 @@ public class ExportJobServiceImpl implements ExportJobService {
     private String normalizeFilename(String filename) {
         String name = filename == null ? "" : filename.trim();
         if (name.isEmpty()) {
-            throw new ExportBizException(400, "文件名不能为空");
+            throw new BizException(400, "文件名不能为空");
         }
         if (name.length() > 255) {
-            throw new ExportBizException(400, "文件名长度不能超过 255");
+            throw new BizException(400, "文件名长度不能超过 255");
         }
         return name;
     }
@@ -165,10 +207,10 @@ public class ExportJobServiceImpl implements ExportJobService {
     private List<Long> normalizeSelectedIds(List<Long> selectedIds) {
         List<Long> ids = dedupeSorted(selectedIds);
         if (ids.isEmpty()) {
-            throw new ExportBizException(400, "导出已选缺少 selectedIds");
+            throw new BizException(400, "导出已选缺少 selectedIds");
         }
         if (ids.size() > MAX_ID_COUNT) {
-            throw new ExportBizException(400, "已选订单数量不能超过 100");
+            throw new BizException(400, "已选订单数量不能超过 100");
         }
         return ids;
     }
@@ -176,7 +218,7 @@ public class ExportJobServiceImpl implements ExportJobService {
     private List<Long> normalizeExcludedIds(List<Long> excludedIds) {
         List<Long> ids = dedupeSorted(excludedIds);
         if (ids.size() > MAX_ID_COUNT) {
-            throw new ExportBizException(400, "排除订单数量不能超过 100");
+            throw new BizException(400, "排除订单数量不能超过 100");
         }
         return ids;
     }
@@ -316,9 +358,9 @@ public class ExportJobServiceImpl implements ExportJobService {
                 new LambdaQueryWrapper<ExportJob>().eq(ExportJob::getIdempotencyKey, key));
         if (existing != null) {
             if (requestHash.equals(existing.getRequestHash())) {
-                throw new ExportBizException(409, MSG_DUP_CONTENT);
+                throw new BizException(409, MSG_DUP_CONTENT);
             }
-            throw new ExportBizException(409, MSG_CONFLICT);
+            throw new BizException(409, MSG_CONFLICT);
         }
         // 理论不可达：唯一键冲突必有已存在行
         throw original;

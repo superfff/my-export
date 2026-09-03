@@ -2,9 +2,9 @@ package com.example.order.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.example.order.common.ApiResponse;
-import com.example.order.common.PageResult;
-import com.example.order.common.SortParamValidator;
+import com.example.common.ApiResponse;
+import com.example.common.PageResult;
+import com.example.common.SortParamValidator;
 import com.example.order.dto.OrderQueryDTO;
 import com.example.order.dto.OrderVO;
 import com.example.order.entity.Order;
