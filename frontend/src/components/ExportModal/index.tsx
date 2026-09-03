@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Modal, Form, Input, Checkbox } from 'antd';
 import styles from './ExportModal.module.css';
 
@@ -13,18 +14,25 @@ export interface ExportModalProps {
   title: string;
   /** 表头字段选项 */
   columnOptions: ColumnOption[];
-  /** 确认回调，返回文件名和勾选字段 */
-  onConfirm: (filename: string, fields: string[]) => void;
+  /** 确认回调，支持异步提交；Promise resolve 表示提交成功（含"已有相同导出任务"） */
+  onConfirm: (filename: string, fields: string[]) => Promise<void>;
 }
 
 export default function ExportModal({ open, onClose, title, columnOptions, onConfirm }: ExportModalProps) {
   const [form] = Form.useForm<{ filename: string; fields: string[] }>();
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
   const handleOk = async () => {
     try {
       const values = await form.validateFields();
-      onConfirm(values.filename, values.fields);
-      form.resetFields();
+      setConfirmLoading(true);
+      try {
+        await onConfirm(values.filename, values.fields);
+        // 仅在提交成功后重置表单；失败时保留用户输入供重试
+        form.resetFields();
+      } finally {
+        setConfirmLoading(false);
+      }
     } catch {
       // 校验失败，antd Form 自动展示提示
     }
@@ -45,6 +53,7 @@ export default function ExportModal({ open, onClose, title, columnOptions, onCon
       cancelText="取消"
       width={480}
       destroyOnHidden
+      confirmLoading={confirmLoading}
     >
       <Form form={form} layout="vertical" className={styles.form}>
         <Form.Item

@@ -16,7 +16,7 @@ describe('ExportModal', () => {
         onClose={() => {}}
         title="导出已选（3 条）"
         columnOptions={columnOptions}
-        onConfirm={() => {}}
+        onConfirm={async () => {}}
       />,
     );
     expect(screen.getByText('导出已选（3 条）')).toBeInTheDocument();
@@ -29,7 +29,7 @@ describe('ExportModal', () => {
         onClose={() => {}}
         title="导出"
         columnOptions={columnOptions}
-        onConfirm={() => {}}
+        onConfirm={async () => {}}
       />,
     );
     expect(screen.getByPlaceholderText('请输入导出文件名')).toBeInTheDocument();
@@ -45,7 +45,7 @@ describe('ExportModal', () => {
         onClose={() => {}}
         title="导出"
         columnOptions={columnOptions}
-        onConfirm={() => {}}
+        onConfirm={async () => {}}
       />,
     );
     await userEvent.click(screen.getByText('确认导出'));
@@ -61,7 +61,7 @@ describe('ExportModal', () => {
         onClose={() => {}}
         title="导出"
         columnOptions={columnOptions}
-        onConfirm={() => {}}
+        onConfirm={async () => {}}
       />,
     );
     // 填入文件名但不勾选字段
@@ -102,7 +102,7 @@ describe('ExportModal', () => {
         onClose={onClose}
         title="导出"
         columnOptions={columnOptions}
-        onConfirm={() => {}}
+        onConfirm={async () => {}}
       />,
     );
     await userEvent.click(screen.getByText(/取.*消/));

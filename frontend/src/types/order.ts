@@ -77,6 +77,27 @@ export enum ExportMode {
   FILTERED = 'FILTERED',
 }
 
+/** 导出任务状态（本期后端恒 PENDING，无推进路径） */
+export type ExportJobStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+
+/** 后端返回的导出任务（创建成功响应 data） */
+export interface ExportJobVO {
+  /** 导出任务自增 id */
+  id: number;
+  /** 导出文件名 */
+  filename: string;
+  /** 导出场景 */
+  exportMode: ExportMode;
+  /** 状态 */
+  status: ExportJobStatus;
+  /** 统计总条数：创建时按本任务范围命中订单总数 */
+  expectedTotal: number;
+  /** 最大订单 id：创建时命中订单最大 t_order.id（一致性水位） */
+  maxOrderId: number;
+  /** 创建时间 */
+  createdAt: string;
+}
+
 /** 导出请求参数 */
 export interface ExportParams {
   /** 导出文件名 */

@@ -16,11 +16,14 @@
       "Bash(lsof -i :8080 -sTCP:LISTEN)",
       "Bash(docker exec *)",
       "Bash(lsof -i :5173 -sTCP:LISTEN)",
-      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:5173/)"
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl *)",
+      "Read(//Users/superfff/.claude/plugins/**)",
+      "Read(//Users/superfff/.claude/plugins/marketplaces/**)"
     ]
   },
-  "theme": "dark",
   "skillOverrides": {
     "change-log": "name-only"
-  }
+  },
+  "theme": "dark"
 }

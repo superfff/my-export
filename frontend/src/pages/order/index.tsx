@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Tag, Button, Space, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import PageTable from '../../components/PageTable';
@@ -7,8 +7,12 @@ import ExportModal from '../../components/ExportModal';
 import OrderQueryForm from './OrderQueryForm';
 import type { OrderFormValues } from './OrderQueryForm';
 import { fetchOrders } from '../../http/order';
+import { submitExportJob } from '../../http/export';
+import type { ExportJobRequest } from '../../http/export';
+import { ApiError } from '../../http/request';
+import { EXPORT_409_MESSAGES } from '../../constants/export';
 import { ORDER_STATUS, MAX_SELECTION } from '../../constants/order';
-import type { Order, OrderQuery, OrderStatus, SelectionState, ExportParams } from '../../types/order';
+import type { Order, OrderQuery, OrderStatus, SelectionState } from '../../types/order';
 import { ExportMode, SelectionMode } from '../../types/order';
 import { formatDateTime } from '../../utils/format';
 import styles from './index.module.css';
@@ -52,6 +56,50 @@ const exportColumnOptions = columns
 /** 导出入口类型 */
 type ExportEntry = 'selected' | 'filtered';
 
+/** 进行中的导出意图：同一内容重试复用同一幂等 Key，内容变化重新生成 */
+interface PendingExport {
+  key: string;
+  /** 归一化导出内容的签名（文件名除外，与后端 request_hash 口径一致） */
+  sig: string;
+}
+
+/** 从筛选状态抽取后端导出的筛选谓词（只保留六键，去掉分页/排序） */
+function filterQuery(query: OrderQuery): NonNullable<ExportJobRequest['query']> {
+  const out: NonNullable<ExportJobRequest['query']> = {};
+  if (query.orderNo) out.orderNo = query.orderNo.trim();
+  if (query.customerName) out.customerName = query.customerName.trim();
+  if (query.phone) out.phone = query.phone.trim();
+  if (query.status !== undefined && query.status !== null) out.status = query.status;
+  if (query.startTime !== undefined && query.startTime !== null) out.startTime = query.startTime;
+  if (query.endTime !== undefined && query.endTime !== null) out.endTime = query.endTime;
+  return out;
+}
+
+/** 生成幂等 Key：优先 crypto.randomUUID，非安全上下文降级 */
+function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** 归一化导出内容的签名：固定键序、id/字段排序，确保"相同内容 → 相同签名" */
+function buildSignature(body: ExportJobRequest): string {
+  const q = body.query ?? {};
+  const queryCanon: Record<string, unknown> = {};
+  (['orderNo', 'customerName', 'phone', 'status', 'startTime', 'endTime'] as const).forEach((key) => {
+    const value = q[key];
+    if (value !== undefined && value !== null && value !== '') queryCanon[key] = value;
+  });
+  return JSON.stringify({
+    mode: body.mode,
+    fields: [...body.fields].sort(),
+    query: queryCanon,
+    selectedIds: [...(body.selectedIds ?? [])].sort((a, b) => a - b),
+    excludedIds: [...(body.excludedIds ?? [])].sort((a, b) => a - b),
+  });
+}
+
 export default function OrderList() {
   const [list, setList] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
@@ -69,6 +117,12 @@ export default function OrderList() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportTitle, setExportTitle] = useState('');
   const [exportEntry, setExportEntry] = useState<ExportEntry>('selected');
+
+  // 幂等 Key 生命周期：只持有"提交中 / 失败待重试"的导出意图
+  const pendingRef = useRef<PendingExport | null>(null);
+  const clearPending = () => {
+    pendingRef.current = null;
+  };
 
   // 拉取订单数据，依赖 query/page/pageSize 变化时重新请求
   const loadData = useCallback(async () => {
@@ -107,6 +161,8 @@ export default function OrderList() {
     setPage(1);
     // 查询条件变更时重置勾选状态
     setSelectionState(createInitialSelectionState());
+    // 筛选变化会使导出内容改变，作废进行中的导出意图
+    clearPending();
   };
 
   const handleReset = () => {
@@ -114,6 +170,7 @@ export default function OrderList() {
     setPage(1);
     // 重置时清空勾选
     setSelectionState(createInitialSelectionState());
+    clearPending();
   };
 
   const handlePageChange = (p: number, ps: number) => {
@@ -123,6 +180,8 @@ export default function OrderList() {
 
   const handleSelectionChange = (nextState: SelectionState) => {
     setSelectionState(nextState);
+    // 勾选变化会使导出内容改变，作废进行中的导出意图
+    clearPending();
   };
 
   /** 选择达到上限时的 toast 提示 */
@@ -144,6 +203,8 @@ export default function OrderList() {
 
   /** 点击"导出已选" */
   const handleExportSelected = () => {
+    // 新一轮导出意图：作废旧 Key
+    clearPending();
     setExportEntry('selected');
     setExportTitle(`导出已选（${selectedCount} 条）`);
     setExportOpen(true);
@@ -151,32 +212,65 @@ export default function OrderList() {
 
   /** 点击"导出筛选结果" */
   const handleExportFiltered = () => {
+    clearPending();
     setExportEntry('filtered');
     setExportTitle(`导出筛选结果（${total} 条）`);
     setExportOpen(true);
   };
 
-  /** 弹窗确认：拼接导出参数 */
-  const handleExportConfirm = (filename: string, fields: string[]) => {
-    const params: ExportParams = { filename, fields, mode: ExportMode.SELECTED };
+  /** 弹窗确认：拼接导出请求体并异步提交，Promise 成功（含"已有相同导出任务"）时才由父级关弹窗 */
+  const handleExportConfirm = async (filename: string, fields: string[]) => {
+    // 1. 拼接后端请求体（query 只保留筛选谓词，id 升序）
+    const body: ExportJobRequest = { filename: filename.trim(), fields, mode: ExportMode.SELECTED };
 
     if (exportEntry === 'selected') {
       if (selectionState.mode === SelectionMode.MANUAL) {
-        params.mode = ExportMode.SELECTED;
-        params.selectedIds = Array.from(selectionState.selectedIds);
+        body.mode = ExportMode.SELECTED;
+        body.selectedIds = Array.from(selectionState.selectedIds).sort((a, b) => a - b);
       } else {
-        params.mode = ExportMode.ALL_EXCLUDE;
-        params.excludedIds = Array.from(selectionState.excludedIds);
-        params.query = query;
+        body.mode = ExportMode.ALL_EXCLUDE;
+        body.excludedIds = Array.from(selectionState.excludedIds).sort((a, b) => a - b);
+        body.query = filterQuery(query);
       }
     } else {
-      params.mode = ExportMode.FILTERED;
-      params.query = query;
+      body.mode = ExportMode.FILTERED;
+      body.query = filterQuery(query);
     }
 
-    // 暂不发送后端请求，仅输出拼接的参数
-    console.log('导出参数：', params);
-    setExportOpen(false);
+    // 2. 幂等 Key：内容未变且上一意图仍在 → 复用；否则重新生成
+    const sig = buildSignature(body);
+    const pending = pendingRef.current;
+    let key: string | null = pending && pending.sig === sig ? pending.key : null;
+    if (key === null) {
+      key = newIdempotencyKey();
+      pendingRef.current = { key, sig };
+    }
+
+    try {
+      await submitExportJob(body, key);
+      message.success('已创建导出任务');
+      clearPending();
+      setExportOpen(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.httpStatus === 409) {
+        if (err.message === EXPORT_409_MESSAGES.duplicate) {
+          // 首次其实已入库、仅响应丢失后的重试 → 按成功闭环
+          message.success('已创建导出任务');
+          clearPending();
+          setExportOpen(false);
+          return;
+        }
+        if (err.message === EXPORT_409_MESSAGES.conflict) {
+          // 幂等值冲突：废弃当前 Key（正常生命周期不应发生），弹窗留开供重新提交
+          message.error('导出内容冲突，请重新确认后导出');
+          clearPending();
+          throw err;
+        }
+      }
+      // 网络失败 / 超时 / 5xx / 400 等：保留 pending，同内容重试复用同一 Key
+      message.error(err instanceof Error ? err.message : '导出任务创建失败');
+      throw err;
+    }
   };
 
   return (

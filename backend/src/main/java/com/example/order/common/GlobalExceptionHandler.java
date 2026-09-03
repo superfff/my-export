@@ -1,5 +1,7 @@
 package com.example.order.common;
 
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -17,5 +19,24 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ApiResponse<Void> handleIllegalArgument(IllegalArgumentException e) {
         return ApiResponse.error(400, e.getMessage());
+    }
+
+    /**
+     * 导出业务异常：按异常携带的 HTTP 状态码（400/409）返回真实状态。
+     */
+    @ExceptionHandler(ExportBizException.class)
+    public ResponseEntity<ApiResponse<Void>> handleExportBiz(ExportBizException e) {
+        return ResponseEntity.status(e.getHttpStatus())
+                .body(ApiResponse.error(e.getHttpStatus(), e.getMessage()));
+    }
+
+    /**
+     * 请求体解析失败（如 JSON 格式错误、枚举取值不合法），给 envelope 化的 400。
+     * 仅影响带 JSON body 的请求，无 body 的 GET 接口不受影响。
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNotReadable(HttpMessageNotReadableException e) {
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error(400, "请求体格式错误或字段取值不合法"));
     }
 }
