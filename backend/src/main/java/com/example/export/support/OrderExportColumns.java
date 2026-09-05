@@ -3,6 +3,7 @@ package com.example.export.support;
 import com.example.order.entity.Order;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.function.Function;
@@ -12,15 +13,16 @@ import java.util.function.Function;
  *
  * <p>key（枚举名）= 导出列键，即 export_columns JSON 元素 / 前端勾选 dataIndex；
  * header = 列表所见的中文列标题（导出文件第一行表头文案，与订单列表列名一致）；
- * {@link #value(Order)} = 单元格值：数值列（amount）返回 Number 写 numeric 单元格，
- * 其余文本列返回"净化后"字符串（{@link #sanitize}）。
+ * {@link #value(Order)} = 单元格值：amount 走 STRING 单元格（固定 2 位小数的文本，见 {@link #formatAmount}），
+ * 其余文本列返回"净化后"字符串（{@link #sanitize}）。numeric 单元格（Excel 可求和）本期已无列使用，
+ * ExcelFileWriter 的 Number 分支仅为将来数值列保留。
  */
 public enum OrderExportColumns {
 
     orderNo("订单号", o -> sanitize(o.getOrderNo())),
     customerName("客户名称", o -> sanitize(o.getCustomerName())),
     phone("客户手机号", o -> sanitize(o.getPhone())),
-    amount("订单金额", o -> (o.getAmount() == null ? BigDecimal.ZERO : o.getAmount()).doubleValue()),
+    amount("订单金额", o -> formatAmount(o.getAmount())),
     status("订单状态", o -> statusText(o.getStatus())),
     createdAt("订单创建时间", o -> o.getCreatedAt() == null ? "" : formatDateTime(o.getCreatedAt()));
 
@@ -40,9 +42,15 @@ public enum OrderExportColumns {
         return header;
     }
 
-    /** 单元格值：数值列返回 Number（写 numeric 单元格），文本列返回净化后字符串；恒非 null */
+    /** 单元格值：amount 返回固定 2 位小数的文本，其余文本列返回净化后字符串；恒非 null */
     public Object value(Order row) {
         return value.apply(row);
+    }
+
+    /** 金额 → 固定 2 位小数的纯文本（"12"→"12.00"，"12.5"→"12.50"，null→"0.00"）；setScale 后 toPlainString 防科学计数 */
+    static String formatAmount(BigDecimal amount) {
+        BigDecimal v = amount == null ? BigDecimal.ZERO : amount;
+        return v.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
     /** 按列键取元数据；未知键返回 null（create 字段校验 / execute 反序列化 export_columns 的白名单校验用） */
@@ -61,7 +69,7 @@ public enum OrderExportColumns {
      * 2) 逐码点剔除"控制/非法 XML"字符（&lt;0x20 全部，含换行/回车/制表，及 0xFFFE/0xFFFF）→ 单个空格，
      *    避免单元格换行 / POI 对非法字符抛错；
      * 3) 结果非空且首字符为 {@code = + - @} 之一时，前置单引号 {@code '}（Excel 视为纯文本，防公式/注入）；
-     * 4) 返回结果。numeric 单元格不走本方法。
+     * 4) 返回结果。amount 走 STRING 单元格、不经本方法（纯数值文本，负号/数字不会被当公式；走本方法会给负值多加前导 '）。
      */
     public static String sanitize(String raw) {
         if (raw == null) {

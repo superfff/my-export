@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
  * @param processedRows 已成功写入 excel 的行数（导出进度；RUNNING 期间分批递增，终态=实际导出条数）
  * @param maxOrderId    最大订单 id（创建时命中订单最大 t_order.id，一致性水位）
  * @param createdAt     创建时间
+ * @param finishedAt    任务完成时间（终态 SUCCESS/FAILED 回填；终态前为 null，导出中心【完成时间】列取此值）
  */
 public record ExportJobVO(
         Long id,
@@ -25,6 +26,7 @@ public record ExportJobVO(
         Long expectedTotal,
         Long processedRows,
         Long maxOrderId,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        LocalDateTime finishedAt
 ) {
 }

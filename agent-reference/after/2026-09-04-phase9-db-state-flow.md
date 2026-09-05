@@ -1,5 +1,11 @@
 # 数据库状态流参考 - phase 9（消费者真实执行：keyset 批读 + SXSSF 写 excel + processed_rows + SUCCESS/FAILED）— 供后续迭代
 
+> **phase 10.0 作废标注（详见 `2026-09-05-phase10-file-flow-hardening.md`）**：本文凡提文件落
+> `export.file-dir/export_<jobId>.xlsx`（flat、jobId 命名）、amount 走 numeric 单元格、job 级无 `finished_at`
+> 之处均已作废 —— 改每任务独立目录 `root/<jobId>/export.xlsx`（先写 `.tmp` 再 ATOMIC_MOVE 原子发布）、
+> amount 走 STRING 单元格（固定 2 位小数字符串）、V6 起 `export_jobs` 补 `finished_at/file_path/file_size`。
+> DB 状态流不变部分（claim→execute→finalize 时序、ack 语义、四表职责）仍以本文为准。
+
 > 用途：记录本阶段(9.0)相对 8.0 引入的表结构改动（V4/V5）与"回写状态 / 新建数据"的全部代码路径与事务边界。
 > **本文部分作废并取代 8.0 after-doc（`2026-09-04-phase8-db-state-flow.md`）中关于 `outbox_events.status` 的表述**：V4 已删 `status` 列与 `idx_outbox_pending`，8.0 的"`PENDING ⟺ published_at IS NULL`"不变量失效，改为"未发布 ⟺ `published_at IS NULL`"。涉及 outbox 判据处以本文为准。
 > 后续迭代（下载/文件对外提供、RUNNING 卡死恢复、失败重试成新 attempt、导出文件命名对外化）先读本文，再动代码。

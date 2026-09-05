@@ -17,6 +17,7 @@ import com.example.export.mapper.ExportJobAttemptMapper;
 import com.example.export.mapper.ExportJobMapper;
 import com.example.export.mapper.OutboxEventMapper;
 import com.example.export.service.ExportJobService;
+import com.example.export.support.ExportFileStore;
 import com.example.export.support.OrderExportColumns;
 import com.example.order.entity.Order;
 import com.example.order.mapper.OrderMapper;
@@ -41,9 +42,10 @@ import org.springframework.util.StringUtils;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -93,8 +95,8 @@ public class ExportJobServiceImpl implements ExportJobService {
     private final int batchSize;
     /** SXSSF 内存行窗口 */
     private final int sxssfRowWindow;
-    /** 生成 xlsx 保留目录 */
-    private final String fileDir;
+    /** 受控文件存储：root=export.file-dir（写盘/清理/将来下载的唯一路径来源与越界守卫） */
+    private final ExportFileStore store;
 
     public ExportJobServiceImpl(ExportJobMapper exportJobMapper,
                                 ExportJobAttemptMapper exportJobAttemptMapper,
@@ -113,7 +115,7 @@ public class ExportJobServiceImpl implements ExportJobService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.batchSize = batchSize;
         this.sxssfRowWindow = sxssfRowWindow;
-        this.fileDir = fileDir;
+        this.store = new ExportFileStore(fileDir);
     }
 
     @Override
@@ -215,8 +217,9 @@ public class ExportJobServiceImpl implements ExportJobService {
 
     @Override
     public void executeExport(long jobId) {
-        Path file = Paths.get(fileDir, "export_" + jobId + ".xlsx");
-        ExcelFileWriter writer = new ExcelFileWriter(file, sxssfRowWindow);
+        Path tmp = store.tmpFile(jobId);     // root/<jobId>/export.xlsx.tmp —— SXSSF 写入的中间态
+        Path out = store.finalFile(jobId);   // root/<jobId>/export.xlsx（与 tmp 同目录，保证原子改名前提）
+        ExcelFileWriter writer = new ExcelFileWriter(tmp, sxssfRowWindow);
         long committed = 0L;
         try {
             ExportJob job = exportJobMapper.selectById(jobId);
@@ -229,17 +232,29 @@ public class ExportJobServiceImpl implements ExportJobService {
             writer.open();
             writer.writeHeader(cols.stream().map(OrderExportColumns::header).toList());
             committed = writeBatches(writer, job, snapshot, cols);
-            writer.close();      // flush 落盘，文件保留
-            finalizeJob(jobId, ExportJobStatus.SUCCESS, committed, null);
-            log.info("导出执行成功: jobId={}, 实际导出 {} 行, file={}", jobId, committed, file);
+            writer.close();                  // workbook flush → .tmp 完整落盘（此刻 .xlsx 尚不存在，杜绝半成品可见）
+            publishAtomically(tmp, out);     // ★ 原子改名发布，.tmp 被 move 消费
+            long size = Files.size(out);
+            finalizeJob(jobId, ExportJobStatus.SUCCESS, committed, null, store.relativePath(jobId), size);
+            log.info("导出执行成功: jobId={}, 实际导出 {} 行, file={}", jobId, committed, out);
         } catch (Throwable t) {
-            // best-effort 收尾：释放 SXSSF 临时文件、删除半成品文件，再尝试落 FAILED 终态
+            // best-effort 收尾：释放 SXSSF 临时文件、清空本任务目录 —— 半成品 .tmp 与"已发布但未回写成功"的 .xlsx
+            // 都删（成功却未回写 = 不留孤儿文件）；再尝试落 FAILED 终态（file 两列不带）。
             writer.disposeQuietly();
-            deleteFileQuietly(file);
+            store.deleteTaskDir(jobId);
             String reason = reasonOf(t);
             log.error("导出执行失败, 尝试落 FAILED 终态: jobId={}, reason={}", jobId, reason, t);
             // 若连终态也落不下（DB 不可用）会在此抛出 → 交由消费者 nack 进死信（见 ExportJobConsumer 注释）
-            finalizeJob(jobId, ExportJobStatus.FAILED, committed, reason);
+            finalizeJob(jobId, ExportJobStatus.FAILED, committed, reason, null, null);
+        }
+    }
+
+    /** 同目录同卷原子改名发布；ATOMIC_MOVE 不受支持时回退普通 move（同目录 rename 仍原子）。 */
+    private static void publishAtomically(Path tmp, Path out) throws IOException {
+        try {
+            Files.move(tmp, out, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(tmp, out, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -286,8 +301,13 @@ public class ExportJobServiceImpl implements ExportJobService {
         return processed;
     }
 
-    /** 终态回写：job（任务级）+ attempt（本次执行级）在同一事务落定 */
-    private void finalizeJob(long jobId, ExportJobStatus status, long processed, String errorMessage) {
+    /**
+     * 终态回写：job（任务级）+ attempt（本次执行级）在同一事务落定。
+     * job/attempt 的 finished_at 用同一 now 双写同值（导出中心【完成时间】列读 job 值）；
+     * filePath/fileSize 仅 SUCCESS 时非空并写入 job 的 file_path/file_size（FAILED 恒 null、不触碰该两列）。
+     */
+    private void finalizeJob(long jobId, ExportJobStatus status, long processed, String errorMessage,
+                             String filePath, Long fileSize) {
         transactionTemplate.executeWithoutResult(tx -> {
             String err = errorMessage == null ? null
                     : errorMessage.length() <= MAX_ERROR_LEN ? errorMessage
@@ -303,7 +323,10 @@ public class ExportJobServiceImpl implements ExportJobService {
                     .eq(ExportJob::getId, jobId)
                     .eq(ExportJob::getStatus, ExportJobStatus.RUNNING.name())   // 状态即版本，防并发
                     .set(ExportJob::getStatus, status.name())
-                    .set(ExportJob::getProcessedRows, processed));
+                    .set(ExportJob::getProcessedRows, processed)
+                    .set(ExportJob::getFinishedAt, now)
+                    .set(filePath != null, ExportJob::getFilePath, filePath)    // 仅 SUCCESS 落 file 两列
+                    .set(fileSize != null, ExportJob::getFileSize, fileSize));
             if (attemptUpdated == 0 || jobUpdated == 0) {
                 // 理论不可达（RUNNING 状态由本执行独占）；仍抛出让调用方兜底，避免静默丢终态
                 throw new IllegalStateException("导出任务终态回写影响行数为 0: jobId=" + jobId
@@ -355,7 +378,8 @@ public class ExportJobServiceImpl implements ExportJobService {
                 job.getExpectedTotal(),
                 job.getProcessedRows() == null ? 0L : job.getProcessedRows(),
                 job.getMaxOrderId(),
-                job.getCreatedAt()
+                job.getCreatedAt(),
+                job.getFinishedAt()
         );
     }
 
@@ -616,16 +640,10 @@ public class ExportJobServiceImpl implements ExportJobService {
         return StringUtils.hasText(msg) ? msg : t.getClass().getSimpleName();
     }
 
-    private void deleteFileQuietly(Path file) {
-        try {
-            Files.deleteIfExists(file);
-        } catch (IOException e) {
-            log.warn("删除导出半成品文件失败: file={}, reason={}", file, e.getMessage());
-        }
-    }
-
     /**
-     * SXSSF 流式写 xlsx 的小封装：行内存窗口超出自动落临时文件防 OOM，close 时 flush 到目标文件。
+     * SXSSF 流式写 xlsx 的小封装：行内存窗口超出自动落 JVM 临时文件防 OOM，close 时 flush 到写盘对象。
+     * 写盘对象是 taskDir 内的 .tmp 临时文件（open 自动建出 root/&lt;jobId&gt;/）；对外 .xlsx 由调用方在
+     * close 之后经 publishAtomically 原子改名发布 —— .xlsx 只以完整形态一次性出现。
      */
     private static final class ExcelFileWriter {
         private final Path file;
@@ -663,9 +681,9 @@ public class ExportJobServiceImpl implements ExportJobService {
                 Object value = values.get(i);
                 Cell cell = row.createCell(i);
                 if (value instanceof Number number) {
-                    cell.setCellValue(number.doubleValue());   // 数值单元格（可被 Excel 求和）
+                    cell.setCellValue(number.doubleValue());   // numeric 单元格（可被 Excel 求和；本期无列走此分支，为将来数值列保留）
                 } else {
-                    cell.setCellValue((String) value);          // 文本单元格（已净化）
+                    cell.setCellValue((String) value);          // 文本单元格（净化文本 或 amount 固定 2 位小数字符串）
                 }
             }
         }

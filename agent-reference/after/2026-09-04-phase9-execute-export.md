@@ -1,5 +1,9 @@
 # 变更日志 - 2026-09-04 23:37
 
+> **phase 10.0 作废标注（详见 `2026-09-05-phase10-file-flow-hardening.md`）**：本文描述的导出文件落点
+> `export.file-dir/export_<jobId>.xlsx`（flat、jobId 命名）、amount 走 numeric 单元格，已被 phase 10.0 作废 ——
+> 改每任务独立目录 `root/<jobId>/export.xlsx`（`.tmp` 先写、ATOMIC_MOVE 原子发布）、amount 走 STRING 单元格。
+
 ## 概述
 
 按 `agent-reference/before/9.0.prompt.md` 完成 **phase 9.0**：消费者领取消息后，不再只是把任务置为 RUNNING 就结束，而是真正读取订单数据、用 SXSSF 流式生成 excel 文件，把任务推至 SUCCESS/FAILED 终态。同时简化 outbox 模型（删掉冗余的 `status` 列）、统一列元数据来源、前端加进度条，最后在本地跑通"创建导出任务 → 生成 10000 行真实 xlsx → 任务 SUCCESS"的完整链路。

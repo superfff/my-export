@@ -45,6 +45,15 @@ public class ExportJob {
     /** 已成功写入 excel 的行数：导出进度，RUNNING 期间分批递增，终态=实际导出条数 */
     private Long processedRows;
 
+    /** 任务完成时间：终态(SUCCESS/FAILED)回填，与 export_job_attempt.finished_at 同一 now 双写同值 */
+    private LocalDateTime finishedAt;
+
+    /** 成功导出文件相对路径(相对 export.file-dir，形如 <jobId>/export.xlsx)；仅 SUCCESS 后有值 */
+    private String filePath;
+
+    /** 成功导出文件大小(字节)；仅 SUCCESS 后有值 */
+    private Long fileSize;
+
     /** 创建时间 */
     private LocalDateTime createdAt;
 
@@ -137,6 +146,30 @@ public class ExportJob {
 
     public void setProcessedRows(Long processedRows) {
         this.processedRows = processedRows;
+    }
+
+    public LocalDateTime getFinishedAt() {
+        return finishedAt;
+    }
+
+    public void setFinishedAt(LocalDateTime finishedAt) {
+        this.finishedAt = finishedAt;
+    }
+
+    public String getFilePath() {
+        return filePath;
+    }
+
+    public void setFilePath(String filePath) {
+        this.filePath = filePath;
+    }
+
+    public Long getFileSize() {
+        return fileSize;
+    }
+
+    public void setFileSize(Long fileSize) {
+        this.fileSize = fileSize;
     }
 
     public LocalDateTime getCreatedAt() {
