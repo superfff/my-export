@@ -10,7 +10,7 @@ import { fetchOrders } from '../../http/order';
 import { submitExportJob } from '../../http/export';
 import type { ExportJobRequest } from '../../http/export';
 import { ApiError } from '../../http/request';
-import { EXPORT_409_MESSAGES } from '../../constants/export';
+import { ascSortedIds, classifyExport409 } from '../../constants/export';
 import { ORDER_STATUS, MAX_SELECTION } from '../../constants/order';
 import type { Order, OrderQuery, OrderStatus, SelectionState } from '../../types/order';
 import { ExportMode, SelectionMode } from '../../types/order';
@@ -232,10 +232,10 @@ export default function OrderList() {
     if (exportEntry === 'selected') {
       if (selectionState.mode === SelectionMode.MANUAL) {
         body.mode = ExportMode.SELECTED;
-        body.selectedIds = Array.from(selectionState.selectedIds).sort((a, b) => a - b);
+        body.selectedIds = ascSortedIds(selectionState.selectedIds);
       } else {
         body.mode = ExportMode.ALL_EXCLUDE;
-        body.excludedIds = Array.from(selectionState.excludedIds).sort((a, b) => a - b);
+        body.excludedIds = ascSortedIds(selectionState.excludedIds);
         body.query = filterQuery(query);
       }
     } else {
@@ -259,19 +259,19 @@ export default function OrderList() {
       setExportOpen(false);
     } catch (err) {
       if (err instanceof ApiError && err.httpStatus === 409) {
-        if (err.message === EXPORT_409_MESSAGES.duplicate) {
-          // 首次其实已入库、仅响应丢失后的重试 → 按成功闭环
-          message.success('已创建导出任务');
+        // 两条 409 一律复用后端 message 原文展示（前端不拼接自定义文案，后端 message 即最终文本）
+        if (classifyExport409(err.message) === 'duplicate') {
+          // 该意图任务先前已创建（如首次成功但响应丢失后的重试），后端并未新建——
+          // 展示原文后按成功闭环（中性提示，避免再像"已创建"那样暗示新建）
+          message.info(err.message);
           clearPending();
           setExportOpen(false);
           return;
         }
-        if (err.message === EXPORT_409_MESSAGES.conflict) {
-          // 幂等值冲突：废弃当前 Key（正常生命周期不应发生），弹窗留开供重新提交
-          message.error('导出内容冲突，请重新确认后导出');
-          clearPending();
-          throw err;
-        }
+        // conflict：幂等值冲突，属异常生命周期——作废当前 Key（下次确认换新 Key），保留弹窗供重新确认
+        message.error(err.message);
+        clearPending();
+        throw err;
       }
       // 网络失败 / 超时 / 5xx / 400 等：保留 pending，同内容重试复用同一 Key
       message.error(err instanceof Error ? err.message : '导出任务创建失败');

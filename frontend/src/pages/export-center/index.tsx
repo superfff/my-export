@@ -1,9 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Segmented, Tag, Progress } from 'antd';
 import type { TableColumnsType } from 'antd';
 import PageTable from '../../components/PageTable';
 import { fetchExportJobs } from '../../http/export';
-import { EXPORT_JOB_STATUS, EXPORT_JOB_STATUS_TABS, EXPORT_MODE_TEXT } from '../../constants/export';
+import {
+  EXPORT_JOB_STATUS,
+  EXPORT_JOB_STATUS_TABS,
+  EXPORT_MODE_TEXT,
+  exportProgressPercent,
+} from '../../constants/export';
 import type { ExportStatusTab } from '../../constants/export';
 import type { ExportCenterJob } from '../../types/order';
 import { formatDateTime } from '../../utils/format';
@@ -11,13 +16,19 @@ import styles from './index.module.css';
 
 const DEFAULT_PAGE_SIZE = 20;
 
-/** 进度 0-100：优先用后端返回 progress；否则按 actualTotal/expectedTotal 推导；都缺省返回 null → 显示 '-' */
+/** 进度条刷新间隔（ms）：仅当"导出中 tab 或列表含 RUNNING 行"时轻量轮询 */
+const POLL_INTERVAL = 4000;
+
+/**
+ * 进度百分比：基于 processedRows/expectedTotal（SUCCESS→100，否则封顶 99，避免 RUNNING 误显示 100）；
+ * expectedTotal<=0 无法计算时返回 null → 显示 '-'。
+ */
 function resolveExportProgress(job: ExportCenterJob): number | null {
-  if (job.progress != null) return Math.min(100, Math.max(0, Math.round(job.progress)));
-  if (job.actualTotal != null && job.expectedTotal > 0) {
-    return Math.min(100, Math.max(0, Math.round((job.actualTotal / job.expectedTotal) * 100)));
-  }
-  return null;
+  return exportProgressPercent({
+    status: job.status,
+    processedRows: job.processedRows ?? 0,
+    expectedTotal: job.expectedTotal ?? 0,
+  });
 }
 
 const columns: TableColumnsType<ExportCenterJob> = [
@@ -38,10 +49,10 @@ const columns: TableColumnsType<ExportCenterJob> = [
   },
   {
     title: '导出实际条数',
-    dataIndex: 'actualTotal',
+    dataIndex: 'processedRows',
     width: 130,
     align: 'right',
-    render: (_, r) => (r.actualTotal == null ? '-' : r.actualTotal.toLocaleString()),
+    render: (_, r) => (r.processedRows == null ? '-' : r.processedRows.toLocaleString()),
   },
   {
     title: '状态',
@@ -52,8 +63,8 @@ const columns: TableColumnsType<ExportCenterJob> = [
     ),
   },
   {
+    key: 'progress',
     title: '进度',
-    dataIndex: 'progress',
     width: 180,
     render: (_, r) => {
       const p = resolveExportProgress(r);
@@ -70,7 +81,7 @@ const columns: TableColumnsType<ExportCenterJob> = [
   },
 ];
 
-/** 导出中心：只读列表，无任何按钮操作；状态 tab + 底部分页 */
+/** 导出中心：只读列表，无任何按钮操作；状态 tab + 底部分页；"导出中"态下 4s 轮询刷新进度条 */
 export default function ExportCenter() {
   const [list, setList] = useState<ExportCenterJob[]>([]);
   const [total, setTotal] = useState(0);
@@ -78,27 +89,51 @@ export default function ExportCenter() {
   const [statusTab, setStatusTab] = useState<ExportStatusTab>('ALL');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [hasRunning, setHasRunning] = useState(false);
 
-  // 依 statusTab / page / pageSize 拉取；局部取消标志防快速切换竞态
+  // 本轮是否需要轮询：仅当前 tab 为"导出中"或列表含 RUNNING 行时，进度才有机会变化
+  const shouldPoll =
+    statusTab === 'RUNNING' || hasRunning || list.some((job) => job.status === 'RUNNING');
+  const shouldPollRef = useRef(shouldPoll);
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetchExportJobs({ status: statusTab === 'ALL' ? undefined : statusTab, page, pageSize })
-      .then((result) => {
-        if (cancelled) return;
-        setList(result.list);
-        setTotal(result.total);
-      })
-      .catch((err) => {
-        if (!cancelled) console.error('查询导出任务失败：', err);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [statusTab, page, pageSize]);
+    shouldPollRef.current = shouldPoll;
+  });
+
+  // 依 statusTab / page / pageSize 拉取；返回局部取消函数，重入时先作废旧请求防竞态
+  const load = useCallback(
+    (showLoading: boolean) => {
+      let cancelled = false;
+      if (showLoading) setLoading(true);
+      fetchExportJobs({ status: statusTab === 'ALL' ? undefined : statusTab, page, pageSize })
+        .then((result) => {
+          if (cancelled) return;
+          setList(result.list);
+          setTotal(result.total);
+          setHasRunning(result.list.some((job) => job.status === 'RUNNING'));
+        })
+        .catch((err) => {
+          if (!cancelled) console.error('查询导出任务失败：', err);
+        })
+        .finally(() => {
+          if (!cancelled && showLoading) setLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    },
+    [statusTab, page, pageSize],
+  );
+
+  // 首查 / tab / 分页变化时加载
+  useEffect(() => load(true), [load]);
+
+  // 轻量轮询：静默刷新（不动 loading，避免进度条闪烁），仅在需要时触发
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (shouldPollRef.current) load(false);
+    }, POLL_INTERVAL);
+    return () => window.clearInterval(timer);
+  }, [load]);
 
   // tab 切换回到第 1 页
   const handleTabChange = (value: ExportStatusTab | number | string) => {

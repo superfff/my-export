@@ -42,6 +42,9 @@ public class ExportJob {
     /** 最大订单 id：创建时命中订单的最大 t_order.id(一致性水位) */
     private Long maxOrderId;
 
+    /** 已成功写入 excel 的行数：导出进度，RUNNING 期间分批递增，终态=实际导出条数 */
+    private Long processedRows;
+
     /** 创建时间 */
     private LocalDateTime createdAt;
 
@@ -126,6 +129,14 @@ public class ExportJob {
 
     public void setMaxOrderId(Long maxOrderId) {
         this.maxOrderId = maxOrderId;
+    }
+
+    public Long getProcessedRows() {
+        return processedRows;
+    }
+
+    public void setProcessedRows(Long processedRows) {
+        this.processedRows = processedRows;
     }
 
     public LocalDateTime getCreatedAt() {

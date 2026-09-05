@@ -90,19 +90,19 @@ export interface ExportJobVO {
   exportMode: ExportMode;
   /** 状态 */
   status: ExportJobStatus;
-  /** 统计总条数：创建时按本任务范围命中订单总数 */
+  /** 统计总条数：创建时按本任务范围命中订单总数（进度分母） */
   expectedTotal: number;
+  /** 已成功写入 excel 的行数（进度分子；RUNNING 期间分批递增，终态=实际导出条数） */
+  processedRows: number;
   /** 最大订单 id：创建时命中订单最大 t_order.id（一致性水位） */
   maxOrderId: number;
   /** 创建时间 */
   createdAt: string;
 }
 
-/** 导出中心列表行：继承 ExportJobVO；以下 4 个"任务运行指标"为预留，
- *  后端当前不返回（真正导出阶段才填充），本期渲染按缺省（'-'）处理 */
+/** 导出中心列表行：继承 ExportJobVO（processedRows 承载进度与"导出实际条数"）；
+ *  以下 2 个"完成态指标"仍为后端预留字段（尚未返回），本期渲染按缺省（'-'）处理 */
 export interface ExportCenterJob extends ExportJobVO {
-  actualTotal?: number | null; // 导出实际条数
-  progress?: number | null; // 进度百分比 0-100
   finishedAt?: string | null; // 完成时间
   fileSize?: number | null; // 文件大小（字节）
 }

@@ -8,6 +8,8 @@ pnpm-debug.log*
 # Java / Maven
 backend/target/
 *.class
+# 本地导出目录（export.file-dir 默认 ./data/export，避免把本地生成的导出文件提交）
+backend/data/
 
 # IDE
 .idea/

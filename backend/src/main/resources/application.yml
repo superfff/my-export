@@ -10,6 +10,29 @@ spring:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:order_db}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: ${DB_USER:order_user}
     password: ${DB_PASSWORD:order_pass}
+  # RabbitMQ：连接信息经环境变量注入（Docker 一键部署时覆盖，默认值用于本地开发）
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:guest}
+    password: ${RABBIT_PASSWORD:guest}
+    # 生产者确认：dispatcher 需在收到 broker confirm 且无路由 return 后才回写 outbox 发布状态
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        # 手动确认：每个环节确认后才做状态流转
+        acknowledge-mode: manual
+        prefetch: 1
+        # 并发消费线程数：2 个消费者并行，每消费者 prefetch=1 → 同一时刻至多 2 条在途。
+        # 配合 ExportJobConsumer"领一条→真执行→落终态→再 ack"的时序，结构性杜绝"先把多条置 RUNNING 再执行"。
+        concurrency: 2
+        # 说明：消费侧"重试 5 次仍失败进死信"不在容器层配置。manual ack 下容器不会替消费者 reject，
+        # 容器级重试耗尽后消息只会悬在未确认态、永远到不了死信队列（已实测）。
+        # 因此由消费者方法内用 RetryTemplate(maxAttempts=5, 指数退避) 自行重试，最终仍失败时
+        # 显式 basicNack(requeue=false) → 主队列 DLX → export.job.dlq。见 ExportJobConsumer。
   flyway:
     # 开启 Flyway，应用启动时自动执行 db/migration 下的版本脚本
     enabled: true
@@ -29,6 +52,12 @@ mybatis-plus:
     banner: false
     db-config:
       id-type: auto
+
+# 导出执行（真实文件生成阶段）可调参数
+export:
+  batch-size: 1000              # keyset 每批读取 t_order 的行数（9.0 需求：批量读取窗口可配置）
+  sxssf-row-window: 100         # SXSSF 内存行窗口：超出即落临时文件防 OOM（9.0 需求：插件窗口可配置）
+  file-dir: ${EXPORT_FILE_DIR:./data/export}   # 生成 xlsx 的保留目录（本地默认 backend 工作目录下；容器经 EXPORT_FILE_DIR 注入）
 
 management:
   endpoints:

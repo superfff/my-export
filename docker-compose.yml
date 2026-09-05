@@ -23,6 +23,25 @@ services:
       timeout: 5s
       retries: 20
 
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: order-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: order
+      RABBITMQ_DEFAULT_PASS: order123456
+      TZ: Asia/Shanghai
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   backend:
     build: ./backend
     container_name: order-backend
@@ -33,11 +52,19 @@ services:
       DB_NAME: order_db
       DB_USER: order_user
       DB_PASSWORD: order_pass
+      RABBIT_HOST: rabbitmq
+      RABBIT_USER: order
+      RABBIT_PASSWORD: order123456
+      EXPORT_FILE_DIR: /app/data/export   # 导出 xlsx 保留目录（命名卷持久化，容器重建后文件仍在）
       TZ: Asia/Shanghai
     ports:
       - "8080:8080"
+    volumes:
+      - export-files:/app/data/export
     depends_on:
       mysql:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   frontend:
@@ -51,3 +78,5 @@ services:
 
 volumes:
   mysql-data:
+  rabbitmq-data:
+  export-files:
