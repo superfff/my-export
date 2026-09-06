@@ -368,6 +368,32 @@ public class ExportJobServiceImpl implements ExportJobService {
         return new PageResult<>(list, page.getTotal(), pageNum, pageSize);
     }
 
+    @Override
+    public DownloadSource downloadSource(long jobId) {
+        ExportJob job = exportJobMapper.selectById(jobId);
+        if (job == null) {
+            throw new BizException(404, "导出任务不存在");
+        }
+        if (!ExportJobStatus.SUCCESS.name().equals(job.getStatus())) {
+            // PENDING / RUNNING / FAILED 一律拒绝：半成品/失败产物不外泄
+            throw new BizException(409, "任务尚未成功导出，暂不可下载");
+        }
+        String filePath = job.getFilePath();
+        if (!StringUtils.hasText(filePath)) {
+            throw new BizException(404, "导出文件不存在");
+        }
+        Path file;
+        try {
+            file = store.resolve(filePath);          // ★ 唯一守卫：normalize + startsWith(root)，越界抛
+        } catch (IllegalArgumentException e) {
+            throw new BizException(400, e.getMessage());   // 勿让裸 IllegalArgumentException 漏出（见 R4）
+        }
+        if (!Files.isRegularFile(file)) {
+            throw new BizException(404, "导出文件不存在，可能已被清理");
+        }
+        return new DownloadSource(file, job.getFilename());
+    }
+
     /** 实体 → VO：创建与列表共用同一套映射，避免两处拼 VO 漂移 */
     private ExportJobVO toVO(ExportJob job) {
         return new ExportJobVO(
@@ -420,6 +446,9 @@ public class ExportJobServiceImpl implements ExportJobService {
         String name = filename == null ? "" : filename.trim();
         if (name.isEmpty()) {
             throw new BizException(400, "文件名不能为空");
+        }
+        if (!name.toLowerCase(Locale.ROOT).endsWith(".xlsx")) {
+            name = name + ".xlsx";          // R0：新任务入库名恒带 .xlsx，下载头原样复用
         }
         if (name.length() > 255) {
             throw new BizException(400, "文件名长度不能超过 255");

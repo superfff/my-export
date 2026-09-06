@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Segmented, Tag, Progress } from 'antd';
+import { Segmented, Tag, Progress, Button, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import PageTable from '../../components/PageTable';
-import { fetchExportJobs } from '../../http/export';
+import { downloadExportJob, fetchExportJobs } from '../../http/export';
+import { saveBlob } from '../../utils/download';
 import {
   EXPORT_JOB_STATUS,
   EXPORT_JOB_STATUS_TABS,
@@ -79,7 +80,28 @@ const columns: TableColumnsType<ExportCenterJob> = [
     width: 110,
     render: (_, r) => (r.fileSize == null ? '-' : `${r.fileSize} B`),
   },
+  {
+    title: '操作',
+    key: 'action',
+    width: 90,
+    render: (_, r) =>
+      r.status === 'SUCCESS' ? (
+        <Button type="link" size="small" onClick={() => handleDownload(r)}>
+          下载文件
+        </Button>
+      ) : null,
+  },
 ];
+
+/** 下载：成功落盘；失败 toast 后端原文。文件可能已被清扫（404），toast 即后端文案 */
+async function handleDownload(job: ExportCenterJob) {
+  try {
+    const { blob, filename } = await downloadExportJob(job.id);
+    saveBlob(blob, filename ?? job.filename ?? `export_${job.id}.xlsx`);
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '下载失败');
+  }
+}
 
 /** 导出中心：只读列表，无任何按钮操作；状态 tab + 底部分页；"导出中"态下 4s 轮询刷新进度条 */
 export default function ExportCenter() {

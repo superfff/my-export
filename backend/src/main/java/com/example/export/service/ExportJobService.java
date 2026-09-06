@@ -5,6 +5,8 @@ import com.example.export.dto.ExportCreateRequest;
 import com.example.export.dto.ExportJobQueryDTO;
 import com.example.export.dto.ExportJobVO;
 
+import java.nio.file.Path;
+
 /**
  * 异步导出任务业务层。职责：创建（校验/幂等/快照入库）、列表查询、
  * 消费者"抢占→真实执行"（PENDING→RUNNING→真实导出→SUCCESS/FAILED）。
@@ -51,4 +53,18 @@ public interface ExportJobService {
      * @param jobId export_jobs.id
      */
     void executeExport(long jobId);
+
+    /** 下载源（已通过全部校验）：file 为 store.resolve 之后的绝对路径（已在受控 root 内）， */
+    record DownloadSource(Path file, String filename) {
+    }
+
+    /**
+     * 下载前的定位与校验（只读，不落任何状态）。
+     * 仅 SUCCESS 提供；其余状态/文件缺失/路径越界一律抛 BizException（真实 4xx + envelope），
+     * 由调用方（controller）流式返回文件。
+     *
+     * @param jobId export_jobs.id
+     * @return 越界校验后的文件绝对路径 + 对外文件名
+     */
+    DownloadSource downloadSource(long jobId);
 }

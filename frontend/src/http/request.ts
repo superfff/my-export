@@ -45,6 +45,23 @@ function isEnvelope(body: unknown): body is RawResponse<unknown> {
   return typeof body === 'object' && body !== null && typeof (body as { code?: unknown }).code === 'number';
 }
 
+/** 解析失败响应的 envelope（供下载等非 JSON 接口复用）；body 非 JSON 时降级为 ApiError(HTTP status) */
+export async function toApiError(res: Response): Promise<ApiError> {
+  try {
+    const body = await res.json();
+    if (isEnvelope(body) && body.code !== 0) {
+      return new ApiError(body.message || '请求失败', {
+        httpStatus: res.status,
+        code: body.code,
+        traceId: body.traceId,
+      });
+    }
+  } catch {
+    // body 非 JSON（网关/容器错误）→ 落入下方降级
+  }
+  return new ApiError(`请求失败：HTTP ${res.status}`, { httpStatus: res.status, code: res.status });
+}
+
 /** 发起请求并解析后端统一响应：任意状态都尝试解析 envelope，非 0 code 抛 ApiError */
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = { 'Content-Type': 'application/json', ...(options.headers as Record<string, string> | undefined) };
