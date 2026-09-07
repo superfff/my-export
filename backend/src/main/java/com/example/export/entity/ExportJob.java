@@ -45,6 +45,11 @@ public class ExportJob {
     /** 已成功写入 excel 的行数：导出进度，RUNNING 期间分批递增，终态=实际导出条数 */
     private Long processedRows;
 
+    /** 单调写序号：本 job 全生命周期只增不减，凡把任务往前推进的状态/进度写入都 +1
+     * （claim/每批进度/finalize 终态/重试/租约回收/过期回收）。角色 = 活跃 worker 写回的乐观 CAS
+     * 依据 + 读者/将来 SSE 的快照序号（更大版本 = 更新）。 */
+    private Long jobVersion;
+
     /** 任务完成时间：终态(SUCCESS/FAILED)回填，与 export_job_attempt.finished_at 同一 now 双写同值 */
     private LocalDateTime finishedAt;
 
@@ -53,6 +58,15 @@ public class ExportJob {
 
     /** 成功导出文件大小(字节)；仅 SUCCESS 后有值 */
     private Long fileSize;
+
+    /** worker 心跳：最近一次证明存活的批次/进度写入时间；claim 重置，每次写批顺带刷新 */
+    private LocalDateTime heartbeatAt;
+
+    /** 租约截止 = 最近一次心跳 + 租约秒数（与心跳同步写）；RUNNING 且 lease 为空/过期 → 回收扫描置 FAILED 并清目录 */
+    private LocalDateTime lease;
+
+    /** 成功文件过期时间 = finished_at + 24h（SUCCESS 落终态同写）；SUCCESS 且 expires_at<=now → 扫描先删文件再置 EXPIRED */
+    private LocalDateTime expiresAt;
 
     /** 创建时间 */
     private LocalDateTime createdAt;
@@ -148,6 +162,14 @@ public class ExportJob {
         this.processedRows = processedRows;
     }
 
+    public Long getJobVersion() {
+        return jobVersion;
+    }
+
+    public void setJobVersion(Long jobVersion) {
+        this.jobVersion = jobVersion;
+    }
+
     public LocalDateTime getFinishedAt() {
         return finishedAt;
     }
@@ -170,6 +192,30 @@ public class ExportJob {
 
     public void setFileSize(Long fileSize) {
         this.fileSize = fileSize;
+    }
+
+    public LocalDateTime getHeartbeatAt() {
+        return heartbeatAt;
+    }
+
+    public void setHeartbeatAt(LocalDateTime heartbeatAt) {
+        this.heartbeatAt = heartbeatAt;
+    }
+
+    public LocalDateTime getLease() {
+        return lease;
+    }
+
+    public void setLease(LocalDateTime lease) {
+        this.lease = lease;
+    }
+
+    public LocalDateTime getExpiresAt() {
+        return expiresAt;
+    }
+
+    public void setExpiresAt(LocalDateTime expiresAt) {
+        this.expiresAt = expiresAt;
     }
 
     public LocalDateTime getCreatedAt() {

@@ -62,6 +62,15 @@ public class ExportJobController {
     }
 
     /**
+     * 重试失败导出任务：POST /api/export-job/{id}/retry，仅 FAILED 可重试。
+     * 复用同一 outbox 行置未发布交由 dispatcher（≤5s）重投；旧 attempt 归档不可改。
+     */
+    @PostMapping("/{id}/retry")
+    public ApiResponse<ExportJobVO> retry(@PathVariable("id") Long id) {
+        return ApiResponse.ok(exportJobService.retry(id));
+    }
+
+    /**
      * 下载成功导出文件：GET /api/export-job/{id}/download，仅 SUCCESS 任务有正确文件。
      * 定位/状态/越界校验在 service（已收敛为 BizException）；此处只负责编码文件名并流式返回。
      */

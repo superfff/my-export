@@ -1,7 +1,8 @@
 package com.example.export.enums;
 
 /**
- * 导出任务状态机。本期入库后停留在 PENDING，无任何代码路径推进状态。
+ * 导出任务状态机。
+ * 流转：PENDING→RUNNING→SUCCESS/FAILED；FAILED→(重试)→PENDING；SUCCESS→(文件过期回收)→EXPIRED。
  */
 public enum ExportJobStatus {
 
@@ -14,6 +15,9 @@ public enum ExportJobStatus {
     /** 导出成功 */
     SUCCESS,
 
-    /** 导出失败 */
-    FAILED
+    /** 导出失败（仅该状态可重试） */
+    FAILED,
+
+    /** 文件已过期清理（仅 SUCCESS→EXPIRED，由过期回收扫描置入；不可再下载/重试） */
+    EXPIRED
 }

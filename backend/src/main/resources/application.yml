@@ -4,6 +4,12 @@ server:
 spring:
   application:
     name: order-backend
+  task:
+    scheduling:
+      # @Scheduled 任务池：dispatcher(5s) / 租约回收(60s) / 过期回收(1h) 现 3 个调度任务共跑，
+      # 默认单线程调度器会被长任务拖慢，开 4 线程让 dispatcher 不被扫描饿着
+      pool:
+        size: 4
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     # 数据库连接信息通过环境变量注入，便于 Docker 一键部署时覆盖（默认值用于本地开发）
@@ -58,6 +64,8 @@ export:
   batch-size: 1000              # keyset 每批读取 t_order 的行数（9.0 需求：批量读取窗口可配置）
   sxssf-row-window: 100         # SXSSF 内存行窗口：超出即落临时文件防 OOM（9.0 需求：插件窗口可配置）
   file-dir: ${EXPORT_FILE_DIR:./data/export}   # 生成 xlsx 的保留目录（本地默认 backend 工作目录下；容器经 EXPORT_FILE_DIR 注入）
+  lease-seconds: 300            # 心跳租约时长(秒)：写批顺带刷新 lease=心跳+300；RUNNING 超过即被租约回收置 FAILED
+  expire-hours: 24              # 成功文件过期小时：SUCCESS 落终态写 expires_at=finished+24h；到期由过期回收先删文件再置 EXPIRED
 
 management:
   endpoints:

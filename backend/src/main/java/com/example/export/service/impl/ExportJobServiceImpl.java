@@ -62,10 +62,12 @@ import java.util.Map;
  * 导出任务业务实现。
  *
  * <p>create：校验 → request_hash → 订单库聚合快照 → 同一事务写 export_jobs(PENDING) + outbox_events(未发布, trace_id)；
- * page：只读分页查询（导出中心列表）；
- * claim：消费者抢占（CAS PENDING→RUNNING，同事务记一条 RUNNING 的 export_job_attempt 并回写 outbox attempt_count）；
- * executeExport：抢占后的真实执行 —— 按冻结的 scope_snapshot/max_order_id keyset 分批发读 t_order，
- * SXSSF 流式写 excel，每批推进 processed_rows，结束时 job/attempt 一并落 SUCCESS/FAILED。
+ * page：只读分页查询（导出中心列表）；downloadSource：SUCCESS 才给文件（EXPIRED/未成功/缺失 404/409 语义）；
+ * retry：仅 FAILED 可重试 —— 同事务 FAILED→PENDING(进度归零,写序号+1) + outbox 行置未发布交 dispatcher 重投；
+ * claim：消费者抢占（CAS PENDING→RUNNING + 写序号+1 + 心跳/租约重置，同事务记 RUNNING attempt 并回写 outbox attempt_count）；
+ * executeExport：抢占后的真实执行 —— 按冻结 scope_snapshot/max_order_id keyset 分批写 excel，
+ * 每批进度 UPDATE 带写序号 CAS 并顺带刷心跳/租约（0 行=已易主 → Stale 静默退出），发布前复核归属，
+ * 结束时 finalize 先 job 门(版本+状态 CAS)再 attempt 落 SUCCESS/FAILED。
  */
 @Service
 public class ExportJobServiceImpl implements ExportJobService {
@@ -97,6 +99,10 @@ public class ExportJobServiceImpl implements ExportJobService {
     private final int sxssfRowWindow;
     /** 受控文件存储：root=export.file-dir（写盘/清理/将来下载的唯一路径来源与越界守卫） */
     private final ExportFileStore store;
+    /** 心跳租约时长（秒）：写批顺带刷新 lease = 该心跳 + leaseSeconds（默认 300 = 5 分钟） */
+    private final int leaseSeconds;
+    /** 成功文件过期时长（小时）：SUCCESS 落终态写 expires_at = finished + 该值（默认 24） */
+    private final int expireHours;
 
     public ExportJobServiceImpl(ExportJobMapper exportJobMapper,
                                 ExportJobAttemptMapper exportJobAttemptMapper,
@@ -106,7 +112,9 @@ public class ExportJobServiceImpl implements ExportJobService {
                                 PlatformTransactionManager transactionManager,
                                 @Value("${export.batch-size:1000}") int batchSize,
                                 @Value("${export.sxssf-row-window:100}") int sxssfRowWindow,
-                                @Value("${export.file-dir:./data/export}") String fileDir) {
+                                @Value("${export.file-dir:./data/export}") String fileDir,
+                                @Value("${export.lease-seconds:300}") int leaseSeconds,
+                                @Value("${export.expire-hours:24}") int expireHours) {
         this.exportJobMapper = exportJobMapper;
         this.exportJobAttemptMapper = exportJobAttemptMapper;
         this.outboxEventMapper = outboxEventMapper;
@@ -116,6 +124,8 @@ public class ExportJobServiceImpl implements ExportJobService {
         this.batchSize = batchSize;
         this.sxssfRowWindow = sxssfRowWindow;
         this.store = new ExportFileStore(fileDir);
+        this.leaseSeconds = leaseSeconds;
+        this.expireHours = expireHours;
     }
 
     @Override
@@ -185,11 +195,14 @@ public class ExportJobServiceImpl implements ExportJobService {
     @Override
     @Transactional
     public boolean claim(long eventId, long jobId) {
-        // 1. 乐观锁抢占（状态即版本，无独立 version 列）：仅 PENDING→RUNNING 且影响行数=1 才算抢到
+        // 1. 乐观锁抢占（状态即版本）：仅 PENDING→RUNNING 且影响行数=1 才算抢到；
+        //    同一 CAS 里单调写序号 +1（本执行 startSeq）+ 心跳/租约重置（新执行拿全新租约，R0/R3）
         int claimed = exportJobMapper.update(null, new LambdaUpdateWrapper<ExportJob>()
                 .eq(ExportJob::getId, jobId)
                 .eq(ExportJob::getStatus, ExportJobStatus.PENDING.name())
-                .set(ExportJob::getStatus, ExportJobStatus.RUNNING.name()));
+                .set(ExportJob::getStatus, ExportJobStatus.RUNNING.name())
+                .setSql("job_version = job_version + 1")
+                .setSql("heartbeat_at = NOW(), lease = DATE_ADD(NOW(), INTERVAL " + leaseSeconds + " SECOND)"));
         if (claimed == 0) {
             // 未抢到：已被其它消费者领取 / 已非 PENDING（重复投递、历史终态）→ 幂等丢弃，不留执行痕迹
             return false;
@@ -215,37 +228,92 @@ public class ExportJobServiceImpl implements ExportJobService {
         return true;
     }
 
+    /**
+     * 重试失败导出任务（仅 FAILED 可重试）。同事务：job FAILED→PENDING + processed_rows 归零 + 单调写序号 +1
+     * （让 FAILED 之后的 PENDING 成为"更大版本"的新快照）；同一 outbox 行 published_at→NULL 交由既有 dispatcher
+     * （≤5s）重投 → claim 再 +1 并开新 attempt。旧 FAILED attempt 行原样归档，任何代码不 UPDATE 已终态 attempt。
+     * 并发双击第二次命中 job CAS 0 行 → 409，天然幂等。与下载一致：状态异常一律 BizException 真实 HTTP + envelope。
+     */
+    @Override
+    @Transactional
+    public ExportJobVO retry(long jobId) {
+        ExportJob job = exportJobMapper.selectById(jobId);
+        if (job == null) {
+            throw new BizException(404, "导出任务不存在");
+        }
+        if (!ExportJobStatus.FAILED.name().equals(job.getStatus())) {
+            throw new BizException(409, "仅失败状态的任务可重试");
+        }
+        int jobUpdated = exportJobMapper.update(null, new LambdaUpdateWrapper<ExportJob>()
+                .eq(ExportJob::getId, jobId)
+                .eq(ExportJob::getStatus, ExportJobStatus.FAILED.name())    // status CAS：并发双击第二次 0 行
+                .set(ExportJob::getStatus, ExportJobStatus.PENDING.name())
+                .set(ExportJob::getProcessedRows, 0L)
+                .setSql("job_version = job_version + 1"));
+        if (jobUpdated == 0) {
+            throw new BizException(409, "仅失败状态的任务可重试");
+        }
+        // 复用同一 outbox 行重投（1 任务 = 1 事件）；已 NULL（理论不可达）则不动
+        outboxEventMapper.update(null, new LambdaUpdateWrapper<OutboxEvent>()
+                .eq(OutboxEvent::getJobId, jobId)
+                .isNotNull(OutboxEvent::getPublishedAt)
+                .set(OutboxEvent::getPublishedAt, null));
+        return toVO(exportJobMapper.selectById(jobId));
+    }
+
     @Override
     public void executeExport(long jobId) {
-        Path tmp = store.tmpFile(jobId);     // root/<jobId>/export.xlsx.tmp —— SXSSF 写入的中间态
-        Path out = store.finalFile(jobId);   // root/<jobId>/export.xlsx（与 tmp 同目录，保证原子改名前提）
+        // claim 已提交，此处能读到 claim 后的 job_version —— 作为本执行 startSeq：
+        // 既作 tmp 后缀（每次执行唯一），也是写回乐观 CAS 的预期起点。
+        ExportJob job = exportJobMapper.selectById(jobId);
+        if (job == null) {
+            throw new IllegalStateException("导出任务不存在: jobId=" + jobId);
+        }
+        long startSeq = job.getJobVersion() == null ? 0L : job.getJobVersion();
+        long[] seqRef = { startSeq };                       // 本地预期写序号，每次成功写回 +1，与 DB 同拍
+        Path tmp = store.attemptTmpFile(jobId, startSeq);   // root/<jobId>/export.<startSeq>.tmp —— 本执行写盘中间态
+        Path out = store.finalFile(jobId);                  // root/<jobId>/export.xlsx（最终产物，恒唯一）
         ExcelFileWriter writer = new ExcelFileWriter(tmp, sxssfRowWindow);
         long committed = 0L;
         try {
-            ExportJob job = exportJobMapper.selectById(jobId);
-            if (job == null) {
-                throw new IllegalStateException("导出任务不存在: jobId=" + jobId);
-            }
             ExportScopeSnapshot snapshot = readSnapshot(job.getScopeSnapshot());
             List<OrderExportColumns> cols = readColumns(job.getExportColumns());
 
             writer.open();
             writer.writeHeader(cols.stream().map(OrderExportColumns::header).toList());
-            committed = writeBatches(writer, job, snapshot, cols);
+            committed = writeBatches(writer, job, snapshot, cols, seqRef);
             writer.close();                  // workbook flush → .tmp 完整落盘（此刻 .xlsx 尚不存在，杜绝半成品可见）
+            // R5：发布前归属复核 —— 若已被回收置 FAILED / 过期置 EXPIRED / 新 claim 推前版本，则不再发布
+            ExportJob fresh = exportJobMapper.selectById(jobId);
+            if (fresh == null || !ExportJobStatus.RUNNING.name().equals(fresh.getStatus())
+                    || fresh.getJobVersion() == null || fresh.getJobVersion() != seqRef[0]) {
+                throw new StaleExecutionException(jobId, seqRef[0]);
+            }
             publishAtomically(tmp, out);     // ★ 原子改名发布，.tmp 被 move 消费
             long size = Files.size(out);
-            finalizeJob(jobId, ExportJobStatus.SUCCESS, committed, null, store.relativePath(jobId), size);
+            finalizeJob(jobId, ExportJobStatus.SUCCESS, seqRef[0], committed, null,
+                    store.relativePath(jobId), size);
             log.info("导出执行成功: jobId={}, 实际导出 {} 行, file={}", jobId, committed, out);
+        } catch (StaleExecutionException e) {
+            // R4：本执行已被他人接管（租约回收置 FAILED / 过期置 EXPIRED / 新 claim 已把版本推前）——
+            // 静默退出：不落终态、不 deleteTaskDir（保护接管者文件）、不进 DLQ；只删自己这次执行的 tmp。
+            writer.disposeQuietly();
+            store.deleteAttemptTmp(jobId, startSeq);
+            log.warn("导出执行已被接管(Stale), 静默退出: jobId={}, seq={}, reason={}", jobId, startSeq, e.getMessage());
         } catch (Throwable t) {
-            // best-effort 收尾：释放 SXSSF 临时文件、清空本任务目录 —— 半成品 .tmp 与"已发布但未回写成功"的 .xlsx
-            // 都删（成功却未回写 = 不留孤儿文件）；再尝试落 FAILED 终态（file 两列不带）。
+            // 真失败（本执行仍归属、DB 可达）：释放 SXSSF、清空本任务目录（半成品 .tmp 与"已发布但未回写成功"的
+            // .xlsx 都删 = 不留孤儿文件）；再尝试落 FAILED 终态（file 两列不带）。
             writer.disposeQuietly();
             store.deleteTaskDir(jobId);
             String reason = reasonOf(t);
             log.error("导出执行失败, 尝试落 FAILED 终态: jobId={}, reason={}", jobId, reason, t);
-            // 若连终态也落不下（DB 不可用）会在此抛出 → 交由消费者 nack 进死信（见 ExportJobConsumer 注释）
-            finalizeJob(jobId, ExportJobStatus.FAILED, committed, reason, null, null);
+            // 若连终态也落不下（DB 不可用）会在此抛出 → 交由消费者 nack 进死信（见 ExportJobConsumer 注释）；
+            // 若落终态时发现已易主（finalize 抛 Stale）则静默收尾，不误进死信。
+            try {
+                finalizeJob(jobId, ExportJobStatus.FAILED, seqRef[0], committed, reason, null, null);
+            } catch (StaleExecutionException e) {
+                log.warn("导出失败落 FAILED 时任务已被接管, 静默退出: jobId={}, seq={}", jobId, seqRef[0]);
+            }
         }
     }
 
@@ -260,14 +328,20 @@ public class ExportJobServiceImpl implements ExportJobService {
 
     /**
      * keyset 游标批读 + 逐行写 excel，每成功写一批推进一次 processed_rows 与游标。
+     * 每批进度 UPDATE 带写序号 CAS（WHERE job_version=&lt;seq&gt; AND status=RUNNING）：命中 0 行 = 本执行已被他人接管，
+     * 抛 {@link StaleExecutionException}；成功则把序号 +1 回写到 seqRef，与 DB 单调写序号同拍。
+     * 心跳/租约搭进度便车同一条 UPDATE 刷新（R0/R3 零额外 DB 写）。
      *
+     * @param seqRef 长度 1 的写序号引用：入参 = 本执行预期起点，每批成功回写后同步 +1（调用方据此做终态 CAS）
      * @return 实际成功写入文件并已提交进度到 DB 的行数
      */
     private long writeBatches(ExcelFileWriter writer, ExportJob job,
-                              ExportScopeSnapshot snapshot, List<OrderExportColumns> cols) throws IOException {
+                              ExportScopeSnapshot snapshot, List<OrderExportColumns> cols,
+                              long[] seqRef) throws IOException {
         long maxOrderId = job.getMaxOrderId() == null ? Long.MAX_VALUE : job.getMaxOrderId();
         long lastId = 0L;
         long processed = 0L;
+        long seq = seqRef[0];
         List<Object> values = new ArrayList<>(cols.size());
         while (true) {
             LambdaQueryWrapper<Order> w = buildScopeWrapper(snapshot.mode(), snapshot.query(),
@@ -288,11 +362,20 @@ public class ExportJobServiceImpl implements ExportJobService {
                 writer.writeRow(values);
             }
             lastId = batch.get(batch.size() - 1).getId();
-            // 本批全部成功写入后：独立短事务推进进度（updated_at 由 DDL ON UPDATE 自动刷新）
             int size = batch.size();
-            exportJobMapper.update(null, new LambdaUpdateWrapper<ExportJob>()
+            // 本批全部成功写入后：独立短事务推进进度 + 心跳 + 写序号（updated_at 由 DDL ON UPDATE 自动刷新）
+            int n = exportJobMapper.update(null, new LambdaUpdateWrapper<ExportJob>()
                     .eq(ExportJob::getId, job.getId())
-                    .setSql("processed_rows = processed_rows + " + size));
+                    .eq(ExportJob::getJobVersion, seq)                  // R4 守卫：0 行=已易主
+                    .eq(ExportJob::getStatus, ExportJobStatus.RUNNING.name())
+                    .setSql("processed_rows = processed_rows + " + size)
+                    .setSql("heartbeat_at = NOW(), lease = DATE_ADD(NOW(), INTERVAL " + leaseSeconds + " SECOND)")
+                    .setSql("job_version = job_version + 1"));
+            if (n == 0) {
+                throw new StaleExecutionException(job.getId(), seq);
+            }
+            seq++;
+            seqRef[0] = seq;                                             // 本地与 DB 同拍
             processed += size;
             if (size < batchSize || lastId >= maxOrderId) {
                 break;
@@ -302,35 +385,59 @@ public class ExportJobServiceImpl implements ExportJobService {
     }
 
     /**
-     * 终态回写：job（任务级）+ attempt（本次执行级）在同一事务落定。
+     * 终态回写：job（任务级）+ attempt（本次执行级）在同一事务落定，顺序 = **先 job 门后 attempt**（R4）。
+     * job 门 = 版本 + 状态 CAS（WHERE job_version=&lt;seq&gt; AND status=RUNNING）：归属由 job 门证明后，
+     * attempt 按 job_id + RUNNING 定位即可，无需再带 attempt_no。
      * job/attempt 的 finished_at 用同一 now 双写同值（导出中心【完成时间】列读 job 值）；
-     * filePath/fileSize 仅 SUCCESS 时非空并写入 job 的 file_path/file_size（FAILED 恒 null、不触碰该两列）。
+     * filePath/fileSize/expires_at 仅 SUCCESS 时写入（FAILED 恒 null、不触碰）。
+     * job 门 0 行 → selectById 判定：job 非 RUNNING 或版本已推进 → 抛 {@link StaleExecutionException}（已被接管），
+     * 否则才抛 IllegalStateException（真异常兜底）。
      */
-    private void finalizeJob(long jobId, ExportJobStatus status, long processed, String errorMessage,
+    private void finalizeJob(long jobId, ExportJobStatus status, long seq, long processed, String errorMessage,
                              String filePath, Long fileSize) {
         transactionTemplate.executeWithoutResult(tx -> {
             String err = errorMessage == null ? null
                     : errorMessage.length() <= MAX_ERROR_LEN ? errorMessage
                     : errorMessage.substring(0, MAX_ERROR_LEN);
             LocalDateTime now = LocalDateTime.now();
+            // 1) job 门（版本+状态 CAS）——本执行仍归属才继续
+            LambdaUpdateWrapper<ExportJob> jobUpdate = new LambdaUpdateWrapper<ExportJob>()
+                    .eq(ExportJob::getId, jobId)
+                    .eq(ExportJob::getJobVersion, seq)
+                    .eq(ExportJob::getStatus, ExportJobStatus.RUNNING.name())
+                    .set(ExportJob::getStatus, status.name())
+                    .set(ExportJob::getProcessedRows, processed)
+                    .set(ExportJob::getFinishedAt, now)
+                    .set(ExportJob::getHeartbeatAt, null)
+                    .set(ExportJob::getLease, null)
+                    .setSql("job_version = job_version + 1");
+            if (status == ExportJobStatus.SUCCESS) {
+                // expires_at 用 DB 侧 DATE_ADD(NOW())，与过期扫描比较的 NOW() 同源，避免应用/DB 时区漂移
+                jobUpdate
+                        .set(filePath != null, ExportJob::getFilePath, filePath)      // 仅 SUCCESS 落 file 两列
+                        .set(fileSize != null, ExportJob::getFileSize, fileSize)
+                        .setSql("expires_at = DATE_ADD(NOW(), INTERVAL " + expireHours + " HOUR)");
+            }
+            int jobUpdated = exportJobMapper.update(null, jobUpdate);
+            if (jobUpdated == 0) {
+                ExportJob fresh = exportJobMapper.selectById(jobId);
+                if (fresh == null || !ExportJobStatus.RUNNING.name().equals(fresh.getStatus())
+                        || fresh.getJobVersion() == null || fresh.getJobVersion() != seq) {
+                    throw new StaleExecutionException(jobId, seq);   // 已被接管（回收置终态 / 新 claim 推前版本）
+                }
+                throw new IllegalStateException("导出任务 job 终态回写影响行数为 0 且状态未变(数据异常): jobId=" + jobId);
+            }
+            // 2) attempt 收口（job 门已证明归属；终态后 attempt 永不再 UPDATE = 归档）
             int attemptUpdated = exportJobAttemptMapper.update(null, new LambdaUpdateWrapper<ExportJobAttempt>()
                     .eq(ExportJobAttempt::getJobId, jobId)
                     .eq(ExportJobAttempt::getStatus, ExportJobStatus.RUNNING.name())   // 本任务当前那次执行
                     .set(ExportJobAttempt::getStatus, status.name())
                     .set(ExportJobAttempt::getFinishedAt, now)
                     .set(ExportJobAttempt::getErrorMessage, err));
-            int jobUpdated = exportJobMapper.update(null, new LambdaUpdateWrapper<ExportJob>()
-                    .eq(ExportJob::getId, jobId)
-                    .eq(ExportJob::getStatus, ExportJobStatus.RUNNING.name())   // 状态即版本，防并发
-                    .set(ExportJob::getStatus, status.name())
-                    .set(ExportJob::getProcessedRows, processed)
-                    .set(ExportJob::getFinishedAt, now)
-                    .set(filePath != null, ExportJob::getFilePath, filePath)    // 仅 SUCCESS 落 file 两列
-                    .set(fileSize != null, ExportJob::getFileSize, fileSize));
-            if (attemptUpdated == 0 || jobUpdated == 0) {
-                // 理论不可达（RUNNING 状态由本执行独占）；仍抛出让调用方兜底，避免静默丢终态
-                throw new IllegalStateException("导出任务终态回写影响行数为 0: jobId=" + jobId
-                        + ", status=" + status + ", attempt=" + attemptUpdated + ", job=" + jobUpdated);
+            if (attemptUpdated == 0) {
+                // 理论不可达（job 门已证 RUNNING 归属，RUNNING attempt 应存在）；仍抛出让调用方兜底，避免静默丢终态
+                throw new IllegalStateException("导出任务 attempt 终态回写影响行数为 0: jobId=" + jobId
+                        + ", status=" + status);
             }
         });
     }
@@ -345,7 +452,7 @@ public class ExportJobServiceImpl implements ExportJobService {
                 ExportJobStatus.valueOf(upper);
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("不支持的状态筛选：" + status
-                        + "，仅支持：PENDING、RUNNING、SUCCESS、FAILED");
+                        + "，仅支持：PENDING、RUNNING、SUCCESS、FAILED、EXPIRED");
             }
             status = upper;
         } else {
@@ -373,6 +480,10 @@ public class ExportJobServiceImpl implements ExportJobService {
         ExportJob job = exportJobMapper.selectById(jobId);
         if (job == null) {
             throw new BizException(404, "导出任务不存在");
+        }
+        if (ExportJobStatus.EXPIRED.name().equals(job.getStatus())) {
+            // R2：过期回收已先删文件再置 EXPIRED，走 404（文件缺失同族）而非 409
+            throw new BizException(404, "导出文件已过期清理(生成满24小时后自动清除)");
         }
         if (!ExportJobStatus.SUCCESS.name().equals(job.getStatus())) {
             // PENDING / RUNNING / FAILED 一律拒绝：半成品/失败产物不外泄
@@ -403,6 +514,7 @@ public class ExportJobServiceImpl implements ExportJobService {
                 ExportJobStatus.valueOf(job.getStatus()),
                 job.getExpectedTotal(),
                 job.getProcessedRows() == null ? 0L : job.getProcessedRows(),
+                job.getJobVersion() == null ? 0L : job.getJobVersion(),
                 job.getMaxOrderId(),
                 job.getCreatedAt(),
                 job.getFinishedAt()
@@ -667,6 +779,16 @@ public class ExportJobServiceImpl implements ExportJobService {
     private String reasonOf(Throwable t) {
         String msg = t.getMessage();
         return StringUtils.hasText(msg) ? msg : t.getClass().getSimpleName();
+    }
+
+    /**
+     * 本执行已被他人接管（Stale）的信号：抛出处 = 每批进度 CAS 0 行 / 发布前归属复核失败 / finalize job 门 0 行且任务已易主。
+     * executeExport 单独捕获后静默退出 —— 不落终态、不 deleteTaskDir（保护接管者文件）、不进 DLQ。
+     */
+    private static final class StaleExecutionException extends RuntimeException {
+        StaleExecutionException(long jobId, long seq) {
+            super("本执行已被他人接管(Stale), 静默退出: jobId=" + jobId + ", seq=" + seq);
+        }
     }
 
     /**

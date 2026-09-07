@@ -67,4 +67,14 @@ public interface ExportJobService {
      * @return 越界校验后的文件绝对路径 + 对外文件名
      */
     DownloadSource downloadSource(long jobId);
+
+    /**
+     * 重试失败导出任务：仅 FAILED 可重试。同事务把 job FAILED→PENDING（processed_rows 归零、写序号 +1），
+     * 并复用同一 outbox 行置 published_at=NULL 交由 dispatcher 重投开新 attempt。
+     * job 不存在 → 404；非 FAILED（PENDING/RUNNING/SUCCESS/EXPIRED）或并发抢占失败 → 409。
+     *
+     * @param jobId export_jobs.id
+     * @return 重试后（PENDING）的导出任务 VO
+     */
+    ExportJobVO retry(long jobId);
 }

@@ -42,6 +42,11 @@ export function fetchExportJobs(query: ExportJobListQuery = {}): Promise<PageRes
   return get<PageResult<ExportCenterJob>>('/api/export-job', query);
 }
 
+/** 重试失败导出任务（POST 无 body）；非 FAILED / 并发双击第二次后端返回 409，message 即后端原文 */
+export function retryExportJob(id: number): Promise<ExportCenterJob> {
+  return post<ExportCenterJob>(`/api/export-job/${id}/retry`);
+}
+
 export interface DownloadResult {
   blob: Blob;
   /** 后端 Content-Disposition 解析出的文件名；头缺失时为 null（调用方用行数据 filename 兜底） */

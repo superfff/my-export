@@ -37,6 +37,7 @@ export const EXPORT_JOB_STATUS: Record<ExportJobStatus, { text: string; color: s
   RUNNING: { text: '导出中', color: 'processing' },
   SUCCESS: { text: '成功', color: 'success' },
   FAILED: { text: '失败', color: 'error' },
+  EXPIRED: { text: '已过期', color: 'default' },
 };
 
 /** 状态 tab 选项："全部" + 四状态 */

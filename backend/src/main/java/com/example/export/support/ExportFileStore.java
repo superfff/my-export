@@ -41,6 +41,21 @@ public final class ExportFileStore {
         return taskDir(jobId).resolve(TMP_NAME);
     }
 
+    /** 某次执行(以 claim 后版本号 startSeq 为名)独立的写盘中间态 root/&lt;jobId&gt;/export.&lt;startSeq&gt;.tmp：
+     *  claim 每次 +1 保证跨执行唯一 → 不同执行写盘不相交，防 stale worker 与新执行写同一文件 */
+    public Path attemptTmpFile(long jobId, long startSeq) {
+        return taskDir(jobId).resolve("export." + startSeq + ".tmp");
+    }
+
+    /** best-effort 只删某次执行的 tmp（Stale 静默退出用，绝不动同任务目录其它文件） */
+    public void deleteAttemptTmp(long jobId, long startSeq) {
+        try {
+            Files.deleteIfExists(attemptTmpFile(jobId, startSeq));
+        } catch (IOException e) {
+            log.warn("删除执行tmp失败: file={}, reason={}", attemptTmpFile(jobId, startSeq), e.getMessage());
+        }
+    }
+
     /** 对外完整产物 root/&lt;jobId&gt;/export.xlsx */
     public Path finalFile(long jobId) {
         return taskDir(jobId).resolve(FINAL_NAME);

@@ -77,8 +77,8 @@ export enum ExportMode {
   FILTERED = 'FILTERED',
 }
 
-/** 导出任务状态（本期后端恒 PENDING，无推进路径） */
-export type ExportJobStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+/** 导出任务状态：PENDING→RUNNING→SUCCESS/FAILED；FAILED→(重试)→PENDING；SUCCESS→(文件过期)→EXPIRED */
+export type ExportJobStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'EXPIRED';
 
 /** 后端返回的导出任务（创建成功响应 data） */
 export interface ExportJobVO {
@@ -94,6 +94,8 @@ export interface ExportJobVO {
   expectedTotal: number;
   /** 已成功写入 excel 的行数（进度分子；RUNNING 期间分批递增，终态=实际导出条数） */
   processedRows: number;
+  /** 单调写序号（越大越新）：后端每推进一次状态/进度 +1；phase13 SSE 增量事件按"只接受严格更大版本"合并 */
+  jobVersion: number;
   /** 最大订单 id：创建时命中订单最大 t_order.id（一致性水位） */
   maxOrderId: number;
   /** 创建时间 */

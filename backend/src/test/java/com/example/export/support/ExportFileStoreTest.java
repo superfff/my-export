@@ -49,4 +49,14 @@ class ExportFileStoreTest {
         assertEquals("7/export.xlsx", store.relativePath(7));
         assertEquals("123/export.xlsx", store.relativePath(123));
     }
+
+    @Test
+    void layout_attemptTmpScopedBySeq() {
+        // R5：写盘中间态以 claim 后版本号(startSeq)为名，跨执行的 tmp 互不相交（防 stale 与新执行写同一文件）
+        assertEquals(root.resolve("7/export.1.tmp"), store.attemptTmpFile(7, 1));
+        assertEquals(root.resolve("7/export.2.tmp"), store.attemptTmpFile(7, 2));
+        assertTrue(!store.attemptTmpFile(7, 1).equals(store.attemptTmpFile(7, 2)));
+        // 最终产物名恒唯一、与 attempt 无关
+        assertEquals(root.resolve("7/export.xlsx"), store.finalFile(7));
+    }
 }
